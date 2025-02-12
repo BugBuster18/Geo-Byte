@@ -37,15 +37,7 @@ const TabsLayout = () => {
             <TabIcon icon ={icons.home} focused={focused} title='Home'/>
         )
       }}/>
-      <Tabs.Screen
-      name='explore'
-      options={{
-        title:'Explore',
-        headerShown:false,
-        tabBarIcon:({focused})=>(
-            <TabIcon icon ={icons.search} focused={focused} title='Explore'/>
-        )
-      }}/>
+  
       <Tabs.Screen
       name='profile'
       options={{

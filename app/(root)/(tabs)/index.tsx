@@ -11,18 +11,21 @@ import * as LocalAuthentication from 'expo-local-authentication';
 import { useRouter } from 'expo-router';
 
 const CLASSROOM_COORDINATES = [
-  [ 75.024145,15.393461],
-  [75.024585,15.393709],
-  [75.024331,15.394174 ],
-  [75.023805,15.393964],
-  [ 75.024145,15.393461],
+  // [ 75.024145,15.393461],
+  // [75.024585,15.393709],
+  // [75.024331,15.394174 ],
+  // [75.023805,15.393964],
+  // [ 75.024145,15.393461],
 
 
-  // [75.0251171, 15.3928349], // Corner 1 (lng, lat)
-  // [75.0251674, 15.3927314], // Corner 3
-  // [75.0252418, 15.3927683], // Corner 2
-  // [75.0251908, 15.3928711], // Corner 4
-  // [75.0251171, 15.3928349], // Corner 1 (lng, lat)
+
+// ! classroom
+
+  [75.0251171, 15.3928349], // Corner 1 (lng, lat)
+  [75.0251674, 15.3927314], // Corner 3
+  [75.0252418, 15.3927683], // Corner 2
+  [75.0251908, 15.3928711], // Corner 4
+  [75.0251171, 15.3928349], // Corner 1 (lng, lat)
 ];
 
 const App = () => {
@@ -55,7 +58,7 @@ const App = () => {
    //
    // 
    // 
-   //  if(isinside)
+    if(isinside)
     setModalVisible(true);
   };
 
@@ -246,6 +249,7 @@ const App = () => {
           </View>
         </View>
       </TouchableOpacity>
+      
       
     <View className="flex items-center justify-center mt-5">
     
