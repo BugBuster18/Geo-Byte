@@ -8,23 +8,59 @@ interface CustomTouchableProps {
   toggleArrow: (index: number) => void;
   title: string;
   children?: React.ReactNode;
+  isNavigationOnly?: boolean;
+  showModal?: boolean;
+  onPress?: () => void;
+  isDropdownOnly?: boolean;  // Add this prop
 }
 
-const CustomTouchable: React.FC<CustomTouchableProps> = ({ index, arrowDirection, toggleArrow, title, children }) => {
+const CustomTouchable: React.FC<CustomTouchableProps> = ({ 
+  index, 
+  arrowDirection, 
+  toggleArrow, 
+  title, 
+  children,
+  isNavigationOnly = false,
+  showModal = false,
+  onPress,
+  isDropdownOnly = false  // Add default value
+}) => {
   return (
     <View>
       <TouchableOpacity 
         style={styles.touchable}
-        onPress={() => toggleArrow(index)}
-        activeOpacity={1} // Disable the default touch feedback animation
+        onPress={() => {
+          if (showModal && onPress) {
+            onPress();
+          } else if (isNavigationOnly) {
+            toggleArrow(index);
+          } else {
+            toggleArrow(index);
+          }
+        }}
+        activeOpacity={1}
       >
         <View style={styles.content}>
           <Image source={icons.bed} style={styles.icon} />
           <Text style={styles.text}>{title}</Text>
         </View>
-        <Image source={icons.rightArrow} style={[styles.arrow, { transform: [{ rotate: arrowDirection ? '90deg' : '0deg' }] }]} />
+        {!isNavigationOnly && (
+          <Image 
+            source={icons.rightArrow} 
+            style={[
+              styles.arrow, 
+              { transform: [{ rotate: arrowDirection ? '90deg' : '0deg' }] }
+            ]} 
+          />
+        )}
+        {isNavigationOnly && (
+          <Image 
+            source={icons.rightArrow} 
+            style={styles.arrow}
+          />
+        )}
       </TouchableOpacity>
-      {arrowDirection && (
+      {arrowDirection && !isNavigationOnly && !showModal && (
         <View style={styles.childrenContainer}>
           {children}
         </View>

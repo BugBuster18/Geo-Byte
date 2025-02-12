@@ -74,7 +74,8 @@
     },
     "extra": {
       "router": {
-        "origin": false
+        "origin": false,
+        "hiddenRoutes": ["/subjects/[id]"]
       },
       "eas": {
         "projectId": "2c149c90-4f4a-441c-9489-4b74e17e9fa4"

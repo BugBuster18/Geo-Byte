@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { View, Text, Button, Alert ,Image, ScrollView, SafeAreaView, TouchableOpacity, Animated, Modal } from "react-native";
+import { View, Text, Button, Alert ,Image, ScrollView, SafeAreaView, TouchableOpacity, Animated, Modal, Platform } from "react-native";
 import * as Location from "expo-location";
 import * as turf from "@turf/turf";
 import icons from "@/constants/icons";
@@ -8,6 +8,7 @@ import CustomTouchable from "@/components/CustomTouchable";
 import Subjects from "@/components/Subjects";
 import * as Font from 'expo-font';
 import * as LocalAuthentication from 'expo-local-authentication';
+import { useRouter } from 'expo-router';
 
 const CLASSROOM_COORDINATES = [
   [ 75.024145,15.393461],
@@ -39,6 +40,8 @@ const App = () => {
   const [fontsLoaded, setFontsLoaded] = useState(false);
   const [modalVisible, setModalVisible] = useState(false);
 
+  const router = useRouter();
+
   const toggleArrow = (index: number) => {
     setArrowDirection(prevState => {
       const newState = [...prevState];
@@ -49,47 +52,63 @@ const App = () => {
 
   const GiveAttendance = async () => {
     getUserLocation();
-    if(isinside)
+   //
+   // 
+   // 
+   //  if(isinside)
     setModalVisible(true);
+  };
+
+  const getBiometricType = async () => {
+    const types = await LocalAuthentication.supportedAuthenticationTypesAsync();
+    const biometricMethods = {
+      face: types.includes(LocalAuthentication.AuthenticationType.FACIAL_RECOGNITION),
+      fingerprint: types.includes(LocalAuthentication.AuthenticationType.FINGERPRINT)
+    };
+    return biometricMethods;
   };
 
   const handleAuthentication = async (type: 'face' | 'fingerprint') => {
     setModalVisible(false);
     try {
-      // Check for biometric hardware
       const compatible = await LocalAuthentication.hasHardwareAsync();
       if (!compatible) {
         Alert.alert('Error', 'This device doesn\'t support biometric authentication');
         return;
       }
-  
-      // Get available biometric types
-      const types = await LocalAuthentication.supportedAuthenticationTypesAsync();
-      const isFaceIdAvailable = types.includes(LocalAuthentication.AuthenticationType.FACIAL_RECOGNITION);
-      const isTouchIdAvailable = types.includes(LocalAuthentication.AuthenticationType.FINGERPRINT);
-  
-      if (type === 'face' && !isFaceIdAvailable) {
-        Alert.alert('Error', 'Face ID is not available on this device');
+
+      const biometricMethods = await getBiometricType();
+      
+      if (type === 'face' && !biometricMethods.face) {
+        Alert.alert('Error', 'Face authentication is not available on this device');
         return;
       }
-  
-      if (type === 'fingerprint' && !isTouchIdAvailable) {
-        Alert.alert('Error', 'Touch ID is not available on this device');
+
+      if (type === 'fingerprint' && !biometricMethods.fingerprint) {
+        Alert.alert('Error', 'Fingerprint authentication is not available on this device');
         return;
       }
-  
-      // Attempt authentication
+
+      const androidMessage = type === 'face' ? 
+        'Scan your face to mark attendance' : 
+        'Scan your fingerprint to mark attendance';
+
       const result = await LocalAuthentication.authenticateAsync({
-        promptMessage: type === 'face' ? 'Authenticate using Face ID' : 'Authenticate using Touch ID',
+        promptMessage: Platform.OS === 'android' ? androidMessage : 
+          `Authenticate using ${type === 'face' ? 'Face ID' : 'Touch ID'}`,
         disableDeviceFallback: false,
         cancelLabel: 'Cancel',
         requireConfirmation: false,
+        // Android specific options
+        ...(Platform.OS === 'android' && {
+          authenticationType: type === 'face' ? 
+            LocalAuthentication.AuthenticationType.FACIAL_RECOGNITION : 
+            LocalAuthentication.AuthenticationType.FINGERPRINT
+        })
       });
-  
-      console.log('Authentication result:', result); // Add this for debugging
-  
+
       if (result.success) {
-        Alert.alert("Success", "Attendance marked!") ;
+        Alert.alert("Success", "Attendance marked!");
       } else {
         Alert.alert(
           'Authentication Failed',
@@ -233,15 +252,27 @@ const App = () => {
       <View style={{ width: 350, height: 300, backgroundColor: '#dce6fa', borderWidth: 0, padding: 16, alignItems: 'center', justifyContent: 'space-between', borderRadius: 14 }} 
       className='flex flex-col shadow-md shadow-zinc-300 rounded-full w-full py-4 mt-5'>
         <ScrollView showsHorizontalScrollIndicator={false} showsVerticalScrollIndicator={false}>
-        <CustomTouchable index={0} arrowDirection={arrowDirection[0]} toggleArrow={toggleArrow} title="Today's Classes">
-          <Subjects name="· CS301   Software Engineering" />
-          <Subjects name="· CS301   Software Engineering" />
-          <Subjects name="· CS301   Software Engineering" />
+        <CustomTouchable 
+          index={0} 
+          arrowDirection={arrowDirection[0]} 
+          toggleArrow={toggleArrow} 
+          title="Today's Classes"
+          isDropdownOnly={true}  // Add this prop
+        >
+          <Subjects name="Software Engineering" code="CS301" subjectId="CS301" />
+          <Subjects name="Database Systems" code="CS302" subjectId="CS302" />
+          <Subjects name="Computer Networks" code="CS303" subjectId="CS303" />
         </CustomTouchable>
         <CustomTouchable index={1} arrowDirection={arrowDirection[1]} toggleArrow={toggleArrow} title="Attendance Report">
-          <Subjects name="· CS301   Software Engineering" />
+          <Subjects name="Software Engineering" code="CS301" subjectId="CS301" />
         </CustomTouchable>
-        <CustomTouchable index={2} arrowDirection={arrowDirection[2]} toggleArrow={toggleArrow} title="Subjects">
+        <CustomTouchable 
+          index={2} 
+          arrowDirection={false}
+          toggleArrow={() => router.push('/allsubjects')}
+          title="Subjects"
+          isNavigationOnly={true}
+        >
         </CustomTouchable>
 
         <CustomTouchable index={3} arrowDirection={arrowDirection[3]} toggleArrow={toggleArrow} title="Class Details">
@@ -268,15 +299,13 @@ const App = () => {
       animationType="slide"
       transparent={true}
       visible={modalVisible}
-      onRequestClose={() => {
-        setModalVisible(!modalVisible);
-      }}
+      onRequestClose={() => setModalVisible(false)}
     >
       <View style={{ flex: 1, justifyContent: 'flex-end', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.5)' }}>
         <View style={{ width: '100%', padding: 20, backgroundColor: 'white', borderTopLeftRadius: 20, borderTopRightRadius: 20 }}>
-          <View style={{ flexDirection: 'row', justifyContent: 'center', alignItems: 'center', marginBottom: 20, position: 'relative' }}>
+          <View style={{ flexDirection: 'row', justifyContent: 'center', alignItems: 'center', marginBottom: 20 }}>
             <Text style={{ fontFamily: 'Rubik-Bold', fontSize: 20, textAlign: 'center' }}>
-              Verify your identity
+              Choose Authentication Method
             </Text>
           </View>
           
@@ -299,7 +328,7 @@ const App = () => {
               />
               <View style={{ flex: 1, alignItems: 'center' }}>
                 <Text style={{ fontFamily: 'Rubik-Medium', fontSize: 16, color: '#000' }}>
-                  Use Face ID
+                  {Platform.OS === 'android' ? 'Use Face Authentication' : 'Use Face ID'}
                 </Text>
               </View>
             </TouchableOpacity>

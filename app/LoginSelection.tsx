@@ -5,6 +5,7 @@ import { Image } from 'react-native';
 import { Redirect, router } from 'expo-router';
 import images from '@/constants/images';
 import { useGlobalContext } from '@/lib/global-provider';
+const UserType = 'student';
 
 const LoginSelection = () => {
   const { refetch, loading, isLogged} = useGlobalContext();

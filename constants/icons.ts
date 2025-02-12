@@ -35,6 +35,7 @@ import live from "@/assets/icons/live.png";
 import cancel from "@/assets/icons/cancel.png";
 import faceid from "@/assets/icons/face-id.png";
 import fingerprint from "@/assets/icons/fingerprint.png";
+import warning from "@/assets/icons/warning.png";
 export default {
   live,
   faceid,
@@ -73,4 +74,5 @@ export default {
   wifi,
   location,
   edit,
+  warning,
 };
