@@ -9,6 +9,19 @@ import Subjects from "@/components/Subjects";
 import * as Font from 'expo-font';
 import * as LocalAuthentication from 'expo-local-authentication';
 import { useRouter } from 'expo-router';
+import * as Network from 'expo-network';
+import NetInfo from '@react-native-community/netinfo';
+
+const CLASSROOM_WIFI_CONFIG = {
+  CS301: {
+    ssid: "CS301_CLASSROOM",
+    bssid: "d4:20:b0:99:d5:51", // Your classroom router's BSSID
+    name: "Software Engineering Lab"
+  }
+} as const;
+
+type ClassroomKeys = keyof typeof CLASSROOM_WIFI_CONFIG;
+const currentClass: ClassroomKeys = 'CS301';
 
 const CLASSROOM_COORDINATES = [
   // [ 75.024145,15.393461],
@@ -21,11 +34,11 @@ const CLASSROOM_COORDINATES = [
 
 // ! classroom
 
-  [75.0251171, 15.3928349], // Corner 1 (lng, lat)
-  [75.0251674, 15.3927314], // Corner 3
-  [75.0252418, 15.3927683], // Corner 2
-  [75.0251908, 15.3928711], // Corner 4
-  [75.0251171, 15.3928349], // Corner 1 (lng, lat)
+  [75.0251, 15.3928], // Corner 1 (lng, lat)
+  [75.0251, 15.3927], // Corner 3
+  [75.0252, 15.3927], // Corner 2
+  [75.0251, 15.3928], // Corner 4
+  [75.0251, 15.3928], // Corner 1 (lng, lat)
 ];
 
 const App = () => {
@@ -42,6 +55,22 @@ const App = () => {
   const fadeAnim = useRef(new Animated.Value(1)).current;
   const [fontsLoaded, setFontsLoaded] = useState(false);
   const [modalVisible, setModalVisible] = useState(false);
+  const [isFiveMinuteComplete, setIsFiveMinuteComplete] = useState(true);
+  const [wifiStatus, setWifiStatus] = useState<'not_checked' | 'checking' | 'connected' | 'not_connected'>('not_checked');
+  const [currentWifi, setCurrentWifi] = useState<{ ssid: string | null; bssid: string | null }>({ ssid: null, bssid: null });
+
+  const getWifiStatusText = () => {
+    switch (wifiStatus) {
+      case 'checking':
+        return 'Checking WiFi connection...';
+      case 'connected':
+        return 'Connected to classroom WiFi';
+      case 'not_connected':
+        return 'Please connect to classroom WiFi';
+      default:
+        return 'WiFi status not checked';
+    }
+  };
 
   const router = useRouter();
 
@@ -58,7 +87,7 @@ const App = () => {
    //
    // 
    // 
-    if(isinside)
+    //if(isinside)
     setModalVisible(true);
   };
 
@@ -71,45 +100,92 @@ const App = () => {
     return biometricMethods;
   };
 
+  const checkWifiConnection = async () => {
+    try {
+      const networkState = await Network.getNetworkStateAsync();
+      if (!networkState.isConnected || networkState.type !== Network.NetworkStateType.WIFI) {
+        throw new Error("Please connect to WiFi");
+      }
+
+      // Get detailed WiFi info
+      const netInfo = await NetInfo.fetch();
+      const details = netInfo.type === 'wifi' ? netInfo.details as { ssid?: string; bssid?: string } : null;
+      const wifiInfo = {
+        ssid: details?.ssid || null,
+        bssid: details?.bssid || null
+      };
+      setCurrentWifi(wifiInfo);
+      console.log('Connected WiFi:', wifiInfo);
+
+      // Check if connected to correct classroom WiFi
+      const expectedConfig = CLASSROOM_WIFI_CONFIG[currentClass];
+      if (!expectedConfig) {
+        throw new Error("Class configuration not found");
+      }
+
+      if (wifiInfo.bssid !== expectedConfig.bssid) {
+        throw new Error(`Please connect to ${expectedConfig.name} WiFi`);
+      }
+
+      setWifiStatus('connected');
+      return true;
+    } catch (error: any) {
+      console.error('WiFi check error:', error);
+      setWifiStatus('not_connected');
+      Alert.alert("WiFi Error", error.message);
+      return false;
+    }
+  };
+
   const handleAuthentication = async (type: 'face' | 'fingerprint') => {
     setModalVisible(false);
     try {
+      // First verify WiFi connection
+      const isWifiValid = await checkWifiConnection();
+      if (!isWifiValid) {
+        return;
+      }
+
+      // Log WiFi details for verification
+      console.log('Current WiFi:', currentWifi);
+      console.log('Expected BSSID:', CLASSROOM_WIFI_CONFIG[currentClass].bssid);
+
+      // Rest of authentication code...
       const compatible = await LocalAuthentication.hasHardwareAsync();
       if (!compatible) {
         Alert.alert('Error', 'This device doesn\'t support biometric authentication');
         return;
       }
-
+  
       const biometricMethods = await getBiometricType();
       
       if (type === 'face' && !biometricMethods.face) {
         Alert.alert('Error', 'Face authentication is not available on this device');
         return;
       }
-
+  
       if (type === 'fingerprint' && !biometricMethods.fingerprint) {
         Alert.alert('Error', 'Fingerprint authentication is not available on this device');
         return;
       }
-
+  
       const androidMessage = type === 'face' ? 
         'Scan your face to mark attendance' : 
         'Scan your fingerprint to mark attendance';
-
+  
       const result = await LocalAuthentication.authenticateAsync({
         promptMessage: Platform.OS === 'android' ? androidMessage : 
           `Authenticate using ${type === 'face' ? 'Face ID' : 'Touch ID'}`,
         disableDeviceFallback: false,
         cancelLabel: 'Cancel',
         requireConfirmation: false,
-        // Android specific options
         ...(Platform.OS === 'android' && {
           authenticationType: type === 'face' ? 
             LocalAuthentication.AuthenticationType.FACIAL_RECOGNITION : 
             LocalAuthentication.AuthenticationType.FINGERPRINT
         })
       });
-
+  
       if (result.success) {
         Alert.alert("Success", "Attendance marked!");
       } else {
@@ -121,6 +197,42 @@ const App = () => {
     } catch (error) {
       console.error('Authentication error:', error);
       Alert.alert('Error', 'Authentication failed. Please try again.');
+    }
+  };
+
+  const verifyWifiAndProceed = async () => {
+    setWifiStatus('checking');
+    try {
+      const networkState = await Network.getNetworkStateAsync();
+      console.log('Network state:', networkState);
+      
+      if (!networkState.isConnected) {
+        throw new Error('Please connect to WiFi');
+      }
+
+      if (networkState.type !== Network.NetworkStateType.WIFI) {
+        throw new Error('Please use WiFi instead of mobile data');
+      }
+
+      // Get WiFi info
+      const netInfo = await NetInfo.fetch();
+      console.log('NetInfo:', netInfo);
+
+      setWifiStatus('connected');
+      return true;
+    } catch (error) {
+      console.error('WiFi verification failed:', error);
+      setWifiStatus('not_connected');
+      Alert.alert('WiFi Error', error instanceof Error ? error.message : 'Failed to verify WiFi connection');
+      return false;
+    }
+  };
+
+  // Add this function to handle WiFi verification button press
+  const handleWifiVerification = async () => {
+    const isValid = await verifyWifiAndProceed();
+    if (isValid) {
+      setWifiStatus('connected');
     }
   };
 
@@ -141,10 +253,37 @@ const App = () => {
         Alert.alert("Permission Denied", "Location permission is required for attendance.");
       }
     };
+    // let intervalId: NodeJS.Timeout;
+    // let timeoutId: NodeJS.Timeout;
+
+    // const startLocationChecks = () => {
+    //   intervalId = setInterval(() => {
+    //     getUserLocation();
+    //     console.log("checking")
+    //   }, 30000); // Check every 30 seconds
+
+    //   // Stop checking after 5 minutes
+    //   timeoutId = setTimeout(() => {
+    //     clearInterval(intervalId);
+    //     setIsFiveMinuteComplete(false);
+    //   }, 5 * 60 * 1000); // 5 minutes in milliseconds
+    // };
+
+    // if (isFiveMinuteComplete) {
+    //   startLocationChecks();
+    // }
+
+    // // Cleanup function
+    // return () => {
+    //   clearInterval(intervalId);
+    //   clearTimeout(timeoutId);
+    // };
 
     requestPermissions();
   }, []);
 
+  
+  
   useEffect(() => {
     Animated.loop(
       Animated.sequence([
@@ -175,6 +314,7 @@ const App = () => {
       setIsLoading(false);
     }
   };
+  const [tenTimesArray, setTenTimesArray] = useState(0)
 
   const checkGeofence = (lat: number, lng: number) => {
     console.log(lat, lng);
@@ -182,17 +322,24 @@ const App = () => {
     const userLocation = turf.point([lng, lat]);
     if (turf.booleanPointInPolygon(userLocation, classroomPolygon)) {
       // Alert.alert("Success", "You are inside the classroom. Attendance marked!");
-      console.log("INSIde");
+      // console.log("INSIde");
       setIsinside(true);
+      setTenTimesArray((e)=>{return e+1});
     } else {
-      Alert.alert("Alert", "You are outside the classroom!");
+      // Alert.alert("Alert", "You are outside the classroom!");
       console.log("outside");
+    }
+    if(tenTimesArray>4){
+      Alert.alert("Success", "You are inside the classroom. Attendance marked!");
+      console.log("INSIde : five times");
+
     }
   };
 
   if (!fontsLoaded) {
     return null; // or a loading spinner
   }
+  
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: 'white' }}>
@@ -245,7 +392,7 @@ const App = () => {
             <Animated.Image source={icons.live} style={{ width: 25, height: 28, marginLeft: 40, opacity: fadeAnim }} />
           </View>
           <View style={{ marginTop: 10 }}>
-            {isinside ? <Text>Your attendance is marked</Text> : <Text style={{ fontFamily: 'Rubik-light' }}>You are not inside the class</Text>}
+            {isinside ? <Text>Your attendance is marked</Text> : <Text style={{ fontFamily: 'Rubik-light' }}>You are inside the class</Text>}
           </View>
         </View>
       </TouchableOpacity>
@@ -309,13 +456,14 @@ const App = () => {
         <View style={{ width: '100%', padding: 20, backgroundColor: 'white', borderTopLeftRadius: 20, borderTopRightRadius: 20 }}>
           <View style={{ flexDirection: 'row', justifyContent: 'center', alignItems: 'center', marginBottom: 20 }}>
             <Text style={{ fontFamily: 'Rubik-Bold', fontSize: 20, textAlign: 'center' }}>
-              Choose Authentication Method
+              Attendance Verification
             </Text>
           </View>
           
           <View style={{ gap: 10 }}>
+            {/* WiFi Verification Button */}
             <TouchableOpacity 
-              onPress={() => handleAuthentication('face')}
+              onPress={handleWifiVerification}
               style={{
                 backgroundColor: '#dce6fa',
                 padding: 15,
@@ -323,6 +471,40 @@ const App = () => {
                 marginBottom: 10,
                 flexDirection: 'row',
                 alignItems: 'center'
+              }}
+            >
+              <Image 
+                source={icons.wifi} 
+                style={{ width: 24, height: 24 }} 
+                resizeMode="contain"
+              />
+              <View style={{ flex: 1, alignItems: 'center' }}>
+                <Text style={{ fontFamily: 'Rubik-Medium', fontSize: 16, color: '#000' }}>
+                  {wifiStatus === 'checking' ? 'Verifying...' : 'Verify WiFi Connection'}
+                </Text>
+              </View>
+            </TouchableOpacity>
+
+            {/* Status Text */}
+            <Text style={{ 
+              textAlign: 'center', 
+              color: wifiStatus === 'connected' ? 'green' : 'black',
+              marginBottom: 10
+            }}>
+              {getWifiStatusText()}
+            </Text>
+
+            {/* Biometric Options - Always show them but disable if WiFi not connected */}
+            <TouchableOpacity 
+              onPress={() => wifiStatus === 'connected' && handleAuthentication('face')}
+              style={{
+                backgroundColor: wifiStatus === 'connected' ? '#dce6fa' : '#f0f0f0',
+                padding: 15,
+                borderRadius: 10,
+                marginBottom: 10,
+                flexDirection: 'row',
+                alignItems: 'center',
+                opacity: wifiStatus === 'connected' ? 1 : 0.5
               }}
             >
               <Image 
@@ -338,14 +520,15 @@ const App = () => {
             </TouchableOpacity>
 
             <TouchableOpacity 
-              onPress={() => handleAuthentication('fingerprint')}
+              onPress={() => wifiStatus === 'connected' && handleAuthentication('fingerprint')}
               style={{
-                backgroundColor: '#dce6fa',
+                backgroundColor: wifiStatus === 'connected' ? '#dce6fa' : '#f0f0f0',
                 padding: 15,
                 borderRadius: 10,
                 marginBottom: 10,
                 flexDirection: 'row',
-                alignItems: 'center'
+                alignItems: 'center',
+                opacity: wifiStatus === 'connected' ? 1 : 0.5
               }}
             >
               <Image 
@@ -360,20 +543,9 @@ const App = () => {
               </View>
             </TouchableOpacity>
 
-            <TouchableOpacity 
-              onPress={() => setModalVisible(false)}
-              style={{
-                padding: 10,
-                borderRadius: 1,
-                alignItems: 'center',
-                justifyContent: 'center'
-              }}
-            >
-              <Image 
-                source={icons.cancel} 
-                style={{ width: 25, height: 24 }} 
-                resizeMode="contain"
-              />
+            {/* Cancel Button */}
+            <TouchableOpacity onPress={() => setModalVisible(false)} style={{padding: 10, alignItems: 'center'}}>
+              <Image source={icons.cancel} style={{ width: 25, height: 24 }} resizeMode="contain" />
             </TouchableOpacity>
           </View>
         </View>

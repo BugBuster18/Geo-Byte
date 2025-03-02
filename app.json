@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "ReactNative",
-    "slug": "ReactNative",
+    "name": "GeoByte",
+    "slug": "GeoByte",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
