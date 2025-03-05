@@ -36,6 +36,8 @@ import cancel from "@/assets/icons/cancel.png";
 import faceid from "@/assets/icons/face-id.png";
 import fingerprint from "@/assets/icons/fingerprint.png";
 import warning from "@/assets/icons/warning.png";
+// import teacher from "@/assets/icons/teacher.png";
+import clock from "@/assets/icons/clock.png";
 export default {
   live,
   faceid,
@@ -75,4 +77,6 @@ export default {
   location,
   edit,
   warning,
+  // teacher,
+  clock,
 };

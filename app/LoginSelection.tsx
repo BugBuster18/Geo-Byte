@@ -1,5 +1,5 @@
 import { View, Text, ScrollView, TouchableOpacity } from 'react-native';
-import React from 'react';
+import React, { useEffect } from 'react';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Image } from 'react-native';
 import { Redirect, router } from 'expo-router';
@@ -8,11 +8,24 @@ import { useGlobalContext } from '@/lib/global-provider';
 const UserType = 'student';
 
 const LoginSelection = () => {
-  const { refetch, loading, isLogged} = useGlobalContext();
-  
-    if (!loading && isLogged) return <Redirect href="/" />;
+  const { user, loading, setUserType } = useGlobalContext();
+
+  // Redirect if already logged in
+  useEffect(() => {
+    if (user) {
+      const route = user.userType === 'faculty' ? '/(faculty)/(tabs)' : '/(root)/(tabs)';
+      router.replace(route);
+    }
+  }, [user]);
+
+  const handleSelection = (type: 'student' | 'faculty') => {
+    if (setUserType) {
+      setUserType(type);
+      router.push('/sign-up'); // Changed from sign-in to sign-up
+    }
+  };
+
   return (
-    
     <SafeAreaView className="bg-white h-full">
       <ScrollView contentContainerClassName="h-full">
         <Image 
@@ -30,7 +43,7 @@ const LoginSelection = () => {
           
           {/* Student Login */}
           <TouchableOpacity 
-            onPress={() => router.push('/sign-in')} 
+            onPress={() => handleSelection('student')} 
             className="bg-white shadow-md shadow-zinc-300 rounded-full w-full py-4 mt-5">
             <View className="flex flex-row items-center justify-center">
               <Text className="text-lg font-rubik-medium text-black-300">Login as Student</Text>
@@ -39,7 +52,7 @@ const LoginSelection = () => {
 
           {/* Faculty Login */}
           <TouchableOpacity 
-            onPress={() => router.push('/sign-in')} 
+            onPress={() => handleSelection('faculty')} 
             className="bg-white shadow-md shadow-zinc-300 rounded-full w-full py-4 mt-5">
             <View className="flex flex-row items-center justify-center">
               <Text className="text-lg font-rubik-medium text-black-300">Login as Faculty</Text>

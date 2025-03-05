@@ -11,12 +11,15 @@ import * as LocalAuthentication from 'expo-local-authentication';
 import { useRouter } from 'expo-router';
 import * as Network from 'expo-network';
 import NetInfo from '@react-native-community/netinfo';
+import { ID, Databases } from 'react-native-appwrite';
+import { appwriteConfig, client } from '@/lib/appwrite';
 
 const CLASSROOM_WIFI_CONFIG = {
   CS301: {
     ssid: "CS301_CLASSROOM",
-    bssid: "d4:20:b0:99:d5:51", // Your classroom router's BSSID
-    name: "Software Engineering Lab"
+    bssid: "d4:20:b0:9a:93:71", // Your classroom router's BSSID
+    name: "Software Engineering",
+    code: "CS301" // Added course code
   }
 } as const;
 
@@ -58,13 +61,20 @@ const App = () => {
   const [isFiveMinuteComplete, setIsFiveMinuteComplete] = useState(true);
   const [wifiStatus, setWifiStatus] = useState<'not_checked' | 'checking' | 'connected' | 'not_connected'>('not_checked');
   const [currentWifi, setCurrentWifi] = useState<{ ssid: string | null; bssid: string | null }>({ ssid: null, bssid: null });
+  const [classStarted, setClassStarted] = useState(false);
+  const [timer, setTimer] = useState(0);
+  const [maxTime] = useState(300); // 5 minutes = 300 seconds
+  const [timerInterval, setTimerInterval] = useState<NodeJS.Timeout | null>(null);
+  const [finalTime, setFinalTime] = useState<number | null>(null);
+  const [locationStatus, setLocationStatus] = useState<'not_checked' | 'inside' | 'outside'>('not_checked');
+  const [hasInitialVerification, setHasInitialVerification] = useState(false);
 
   const getWifiStatusText = () => {
     switch (wifiStatus) {
       case 'checking':
         return 'Checking WiFi connection...';
       case 'connected':
-        return 'Connected to classroom WiFi';
+        return 'Connected to WiFi';
       case 'not_connected':
         return 'Please connect to classroom WiFi';
       default:
@@ -102,29 +112,50 @@ const App = () => {
 
   const checkWifiConnection = async () => {
     try {
-      const networkState = await Network.getNetworkStateAsync();
-      if (!networkState.isConnected || networkState.type !== Network.NetworkStateType.WIFI) {
+      // First check if WiFi is enabled and connected
+      const netInfo = await NetInfo.fetch('wifi');
+      console.log('Detailed NetInfo:', netInfo);
+
+      if (!netInfo.isConnected) {
         throw new Error("Please connect to WiFi");
       }
 
-      // Get detailed WiFi info
-      const netInfo = await NetInfo.fetch();
-      const details = netInfo.type === 'wifi' ? netInfo.details as { ssid?: string; bssid?: string } : null;
-      const wifiInfo = {
-        ssid: details?.ssid || null,
-        bssid: details?.bssid || null
-      };
-      setCurrentWifi(wifiInfo);
-      console.log('Connected WiFi:', wifiInfo);
+      // On Android, we need to specifically check for WiFi details
+      if (Platform.OS === 'android') {
+        const wifiInfo = {
+            ssid: (netInfo.details as any)?.ssid || null,
+            bssid: (netInfo.details as any)?.bssid || null
+          };
+        console.log('WiFi Info:', wifiInfo);
 
-      // Check if connected to correct classroom WiFi
-      const expectedConfig = CLASSROOM_WIFI_CONFIG[currentClass];
-      if (!expectedConfig) {
-        throw new Error("Class configuration not found");
-      }
+        // Debug check for BSSID
+        if (!wifiInfo.bssid) {
+          console.warn('BSSID not available. Check location permissions.');
+          // For testing, you might want to bypass this check
+          // return true;
+          throw new Error("Unable to verify classroom WiFi. Please ensure location permissions are enabled.");
+        }
 
-      if (wifiInfo.bssid !== expectedConfig.bssid) {
-        throw new Error(`Please connect to ${expectedConfig.name} WiFi`);
+        setCurrentWifi(wifiInfo);
+
+        // Check if connected to correct classroom WiFi
+        const expectedConfig = CLASSROOM_WIFI_CONFIG[currentClass];
+        if (!expectedConfig) {
+          throw new Error("Class configuration not found");
+        }
+
+        if (wifiInfo.bssid !== expectedConfig.bssid) {
+          console.log('BSSID Mismatch:', {
+            current: wifiInfo.bssid,
+            expected: expectedConfig.bssid
+          });
+          throw new Error(`Please connect to ${expectedConfig.name} WiFi`);
+        }
+      } else {
+        // For iOS, we might need a different approach since BSSID access is limited
+        // You might want to use location verification instead
+        console.warn('iOS WiFi verification fallback to location check');
+        return await verifyLocation();
       }
 
       setWifiStatus('connected');
@@ -133,6 +164,18 @@ const App = () => {
       console.error('WiFi check error:', error);
       setWifiStatus('not_connected');
       Alert.alert("WiFi Error", error.message);
+      return false;
+    }
+  };
+
+  const verifyLocation = async () => {
+    try {
+      const loc = await Location.getCurrentPositionAsync({});
+      const classroomPolygon = turf.polygon([CLASSROOM_COORDINATES]);
+      const userLocation = turf.point([loc.coords.longitude, loc.coords.latitude]);
+      return turf.booleanPointInPolygon(userLocation, classroomPolygon);
+    } catch (error) {
+      console.error('Location verification error:', error);
       return false;
     }
   };
@@ -187,7 +230,21 @@ const App = () => {
       });
   
       if (result.success) {
-        Alert.alert("Success", "Attendance marked!");
+        if (classStarted) {
+          // Mark attendance in Appwrite
+          const attendanceMarked = await markAttendanceInAppwrite();
+          if (attendanceMarked) {
+            Alert.alert("Success", "Attendance marked!", [
+              { text: 'OK', onPress: handleVerificationSuccess }
+            ]);
+          } else {
+            Alert.alert("Error", "Failed to record attendance");
+          }
+        } else {
+          Alert.alert("Success", "Class started!", [
+            { text: 'OK', onPress: handleVerificationSuccess }
+          ]);
+        }
       } else {
         Alert.alert(
           'Authentication Failed',
@@ -235,6 +292,129 @@ const App = () => {
       setWifiStatus('connected');
     }
   };
+
+  const startClass = async () => {
+    try {
+      // First check location
+      const loc = await Location.getCurrentPositionAsync({});
+      const { latitude, longitude } = loc.coords;
+      
+      // Check if inside classroom
+      const classroomPolygon = turf.polygon([CLASSROOM_COORDINATES]);
+      const userLocation = turf.point([longitude, latitude]);
+      
+      if (!turf.booleanPointInPolygon(userLocation, classroomPolygon)) {
+        Alert.alert('Error', 'You must be inside the classroom to start');
+        setLocationStatus('outside');
+        return;
+      }
+
+      // If inside, start the class and timer
+      setLocationStatus('inside');
+      setClassStarted(true);
+      setTimer(0);
+      const interval = setInterval(() => {
+        setTimer(prev => prev + 1);
+        getUserLocation(); // Keep checking location
+      }, 1000);
+      setTimerInterval(interval);
+    } catch (error) {
+      Alert.alert('Error', 'Failed to verify location');
+    }
+  };
+
+  const handleGiveAttendance = async () => {
+    if (!classStarted) {
+      Alert.alert('Error', 'Please wait for class to start');
+      return;
+    }
+    
+    if (locationStatus === 'outside') {
+      Alert.alert('Error', 'You must be inside the classroom to mark attendance');
+      return;
+    }
+
+    // Save final time and stop timer only when marking attendance
+    setFinalTime(timer);
+    if (timerInterval) {
+      clearInterval(timerInterval);
+    }
+    setClassStarted(false);
+    GiveAttendance();
+  };
+
+  const isStudentEligible = async () => {
+    try {
+      // Check WiFi first
+      const wifiConnected = await checkWifiConnection();
+      if (wifiConnected) return true;
+
+      // If WiFi check fails, check location
+      const loc = await Location.getCurrentPositionAsync({});
+      const classroomPolygon = turf.polygon([CLASSROOM_COORDINATES]);
+      // Fix: Correct order of coordinates for turf.point (longitude, latitude)
+      const userLocation = turf.point([loc.coords.longitude, loc.coords.latitude]);
+      
+      return turf.booleanPointInPolygon(userLocation, classroomPolygon);
+    } catch (error) {
+      console.error('Verification error:', error);
+      return false;
+    }
+  };
+
+  const handleAttendanceButton = async () => {
+    if (!classStarted) {
+      // Initial verification to start class
+      const isEligible = await isStudentEligible();
+      if (isEligible) {
+        setLocationStatus('inside');
+        setModalVisible(true);
+      } else {
+        Alert.alert('Error', 'You must be either connected to classroom WiFi or inside the classroom');
+        setLocationStatus('outside');
+      }
+    } else {
+      // For marking attendance
+      const isEligible = await isStudentEligible();
+      if (isEligible) {
+        setModalVisible(true);
+      } else {
+        Alert.alert('Error', 'You must be either connected to classroom WiFi or inside the classroom');
+      }
+    }
+  };
+
+  const handleVerificationSuccess = () => {
+    if (!classStarted) {
+      // Start class after initial verification
+      setClassStarted(true);
+      setHasInitialVerification(true);
+      setTimer(0);
+      const interval = setInterval(() => {
+        setTimer(prev => prev + 1);
+        getUserLocation();
+      }, 1000);
+      setTimerInterval(interval);
+    } else {
+      // Mark attendance
+      setFinalTime(timer);
+      if (timerInterval) {
+        clearInterval(timerInterval);
+      }
+      setClassStarted(false);
+      setHasInitialVerification(false);
+    }
+    setModalVisible(false);
+  };
+
+  // Cleanup timer on unmount
+  useEffect(() => {
+    return () => {
+      if (timerInterval) {
+        clearInterval(timerInterval);
+      }
+    };
+  }, [timerInterval]);
 
   useEffect(() => {
     const loadFonts = async () => {
@@ -314,25 +494,68 @@ const App = () => {
       setIsLoading(false);
     }
   };
-  const [tenTimesArray, setTenTimesArray] = useState(0)
 
-  const checkGeofence = (lat: number, lng: number) => {
+  const checkGeofence = async (lat: number, lng: number) => {
     console.log(lat, lng);
     const classroomPolygon = turf.polygon([CLASSROOM_COORDINATES]);
     const userLocation = turf.point([lng, lat]);
-    if (turf.booleanPointInPolygon(userLocation, classroomPolygon)) {
-      // Alert.alert("Success", "You are inside the classroom. Attendance marked!");
-      // console.log("INSIde");
+    
+    // Check WiFi status
+    const wifiConnected = await checkWifiConnection().catch(() => false);
+    
+    if (wifiConnected || turf.booleanPointInPolygon(userLocation, classroomPolygon)) {
+      setLocationStatus('inside');
       setIsinside(true);
-      setTenTimesArray((e)=>{return e+1});
     } else {
-      // Alert.alert("Alert", "You are outside the classroom!");
-      console.log("outside");
+      setLocationStatus('outside');
+      setIsinside(false);
     }
-    if(tenTimesArray>4){
-      Alert.alert("Success", "You are inside the classroom. Attendance marked!");
-      console.log("INSIde : five times");
+  };
 
+  const getLocationStatusText = () => {
+    if (!classStarted) return 'Class not started';
+    switch (locationStatus) {
+      case 'inside':
+        return 'You are inside the classroom';
+      case 'outside':
+        return 'You are outside the classroom';
+      default:
+        return 'Checking location...';
+    }
+  };
+
+  const markAttendanceInAppwrite = async () => {
+    try {
+      const databases = new Databases(client);
+      const ATTENDANCE_COLLECTION_ID = process.env.EXPO_PUBLIC_APPWRITE_ATTENDANCE_COLLECTION_ID!;
+      
+      // Get current class details
+      const currentClassDetails = CLASSROOM_WIFI_CONFIG[currentClass];
+      
+      const attendanceRecord = await databases.createDocument(
+        appwriteConfig.databaseId,
+        ATTENDANCE_COLLECTION_ID,
+        ID.unique(),
+        {
+          "Name": user?.name || "ganesh",
+          "Email": user?.email || "as@gmail.com",
+          "Created_At": new Date().toISOString(),
+          "isPresent": true,
+          "Course_Code": currentClassDetails.code // Add course code from current class
+        }
+      );
+
+      console.log('Attendance record created:', attendanceRecord);
+      
+      if (!attendanceRecord.$id) {
+        throw new Error('Failed to create complete attendance record');
+      }
+
+      return true;
+    } catch (error) {
+      console.error('Failed to mark attendance:', error);
+      Alert.alert('Error', 'Failed to record attendance. Please try again.');
+      return false;
     }
   };
 
@@ -346,10 +569,10 @@ const App = () => {
     <View className="px-2">
     <View className="flex flex-row items-center justify-between mt-5">
       <View className="flex flex-row">
-        <Image
+        {/* <Image
           source={{ uri: user?.avatar }}
           className="size-12 rounded-full"
-        />
+        /> */}
 
         <View className="flex flex-col items-start ml-2 justify-center">
           <Text style={{ fontFamily: 'Rubik-Regular' }} className="text-xs text-black-100">
@@ -385,52 +608,82 @@ const App = () => {
       <View className="flex flex-row items-center justify-between ">
        <Text style={{ fontFamily: 'Rubik-Bold' }} className="text-2xl mt-5 ml-5 ">Current Class</Text>
       </View>
-      <TouchableOpacity onPress={GiveAttendance} className="flex flex-row items-center justify-between ml-10 mt-2 shadow-md shadow-zinc-300 rounded-lg" style={{ width: 310, height: 80, borderRadius: 14 }}>
+      <View className="flex flex-row items-center justify-between ml-10 mt-2 shadow-md shadow-zinc-300 rounded-lg" style={{ width: 310, height: 80, borderRadius: 14 }}>
         <View className="bg-white rounded-lg p-3" style={{ flex: 1, justifyContent: 'center', alignItems: 'center', flexDirection: 'column' }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-            <Text style={{ fontFamily: 'Rubik-medium' }} className="text-l">· CS301   Software Engineering</Text>
-            <Animated.Image source={icons.live} style={{ width: 25, height: 28, marginLeft: 40, opacity: fadeAnim }} />
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              <Text style={{ fontFamily: 'Rubik-medium' }} className="text-l">· CS301   Software Engineering</Text>
+              <Animated.Image source={icons.live} style={{ width: 25, height: 28, marginLeft: 10, opacity: fadeAnim }} />
+            </View>
+            {(classStarted || finalTime) && (
+              <Text className="text-sm font-rubik text-gray-600">
+                {classStarted ? (
+                  `${Math.floor(timer / 60)}:${(timer % 60).toString().padStart(2, '0')}`
+                ) : (
+                  `${Math.floor(finalTime! / 60)}:${(finalTime! % 60).toString().padStart(2, '0')}`
+                )}
+              </Text>
+            )}
           </View>
           <View style={{ marginTop: 10 }}>
-            {isinside ? <Text>Your attendance is marked</Text> : <Text style={{ fontFamily: 'Rubik-light' }}>You are inside the class</Text>}
+            <Text style={{ 
+              fontFamily: 'Rubik-light',
+              color: locationStatus === 'inside' ? 'green' : locationStatus === 'outside' ? 'red' : 'black'
+            }}>
+              {getLocationStatusText()}
+            </Text>
           </View>
         </View>
+      </View>
+
+      {/* Combined Attendance Button */}
+      <TouchableOpacity 
+        onPress={handleAttendanceButton}
+        className={`bg-blue-500 py-3 rounded-lg mx-10 mt-4 mb-4`} // Added mb-4 for spacing
+      >
+        <Text className="text-white text-center font-rubik-medium text-base">
+          {!classStarted 
+            ? "Verify Your Presence" 
+            : "Mark Attendance"}
+        </Text>
       </TouchableOpacity>
       
-      
-    <View className="flex items-center justify-center mt-5">
+    <View className="flex items-center justify-center">
     
-      <View style={{ width: 350, height: 300, backgroundColor: '#dce6fa', borderWidth: 0, padding: 16, alignItems: 'center', justifyContent: 'space-between', borderRadius: 14 }} 
-      className='flex flex-col shadow-md shadow-zinc-300 rounded-full w-full py-4 mt-5'>
+      <View style={{ width: 350, height: 240 }} // Reduced height from 300 to 200
+        className='bg-[#dce6fa] rounded-lg p-4 shadow-md shadow-zinc-300'
+      >
         <ScrollView showsHorizontalScrollIndicator={false} showsVerticalScrollIndicator={false}>
-        <CustomTouchable 
-          index={0} 
-          arrowDirection={arrowDirection[0]} 
-          toggleArrow={toggleArrow} 
-          title="Today's Classes"
-          isDropdownOnly={true}  // Add this prop
-        >
-          <Subjects name="Software Engineering" code="CS301" subjectId="CS301" />
-          <Subjects name="Database Systems" code="CS302" subjectId="CS302" />
-          <Subjects name="Computer Networks" code="CS303" subjectId="CS303" />
-        </CustomTouchable>
-        <CustomTouchable index={1} arrowDirection={arrowDirection[1]} toggleArrow={toggleArrow} title="Attendance Report">
-          <Subjects name="Software Engineering" code="CS301" subjectId="CS301" />
-        </CustomTouchable>
-        <CustomTouchable 
-          index={2} 
-          arrowDirection={false}
-          toggleArrow={() => router.push('/allsubjects')}
-          title="Subjects"
-          isNavigationOnly={true}
-        >
-        </CustomTouchable>
-
-        <CustomTouchable index={3} arrowDirection={arrowDirection[3]} toggleArrow={toggleArrow} title="Class Details">
-        </CustomTouchable>
+          <CustomTouchable 
+            index={0} 
+            arrowDirection={arrowDirection[0]} 
+            toggleArrow={toggleArrow} 
+            title="Today's Classes"
+            isDropdownOnly={true}
+          >
+            <Subjects name="Software Engineering" code="CS301" subjectId="CS301" />
+            <Subjects name="Database Systems" code="CS302" subjectId="CS302" />
+            <Subjects name="Computer Networks" code="CS303" subjectId="CS303" />
+          </CustomTouchable>
+          
+          <CustomTouchable 
+            index={1} 
+            arrowDirection={arrowDirection[1]} 
+            toggleArrow={toggleArrow} 
+            title="Attendance Report"
+          >
+            <Subjects name="Software Engineering" code="CS301" subjectId="CS301" />
+          </CustomTouchable>
+          
+          <CustomTouchable 
+            index={2} 
+            arrowDirection={false}
+            toggleArrow={() => router.push('/allsubjects')}
+            title="Subjects"
+            isNavigationOnly={true}
+          />
         </ScrollView>
       </View>
-      
     </View>
     
     {/* <View className="flex flex-col items-center justify-center mt-5">

@@ -22,6 +22,23 @@ export default function RootLayout() {
   // every screen will have the access to the data within global provider
   return (
   <GlobalProvider> 
-    <Stack screenOptions={{headerShown:false}} />
+    <Stack screenOptions={{headerShown:false}}>
+      <Stack.Screen name="index" options={{ headerShown: false }} />
+      <Stack.Screen 
+        name="LoginSelection" 
+        options={{ 
+          headerShown: false,
+          gestureEnabled: false 
+        }} 
+      />
+      <Stack.Screen name="sign-in" />
+      <Stack.Screen 
+        name="(root)" 
+        options={{
+          headerShown: false,
+          gestureEnabled: false
+        }}
+      />
+    </Stack>
   </GlobalProvider>);
 }
