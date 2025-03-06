@@ -17,7 +17,7 @@ import { appwriteConfig, client } from '@/lib/appwrite';
 const CLASSROOM_WIFI_CONFIG = {
   CS301: {
     ssid: "CS301_CLASSROOM",
-    bssid: "d4:20:b0:9a:93:71", // Your classroom router's BSSID
+    bssid: "d4:20:b0:99:d5:51", // Your classroom router's BSSID
     name: "Software Engineering",
     code: "CS301" // Added course code
   }
@@ -70,6 +70,11 @@ const App = () => {
   const [hasInitialVerification, setHasInitialVerification] = useState(false);
 
   const getWifiStatusText = () => {
+    if (Platform.OS === 'ios') {
+      return locationStatus === 'inside' 
+        ? 'Location verified'
+        : 'Please ensure you are inside the classroom';
+    }
     switch (wifiStatus) {
       case 'checking':
         return 'Checking WiFi connection...';
@@ -112,58 +117,53 @@ const App = () => {
 
   const checkWifiConnection = async () => {
     try {
-      // First check if WiFi is enabled and connected
-      const netInfo = await NetInfo.fetch('wifi');
-      console.log('Detailed NetInfo:', netInfo);
+      // iOS: Use location-based verification
+      if (Platform.OS === 'ios') {
+        const isInside = await verifyLocation();
+        if (isInside) {
+          setWifiStatus('connected');
+          return true;
+        }
+        throw new Error("Please ensure you are inside the classroom");
+      }
 
+      // Android: Keep existing WiFi verification
+      const netInfo = await NetInfo.fetch('wifi');
       if (!netInfo.isConnected) {
         throw new Error("Please connect to WiFi");
       }
 
-      // On Android, we need to specifically check for WiFi details
-      if (Platform.OS === 'android') {
-        const wifiInfo = {
-            ssid: (netInfo.details as any)?.ssid || null,
-            bssid: (netInfo.details as any)?.bssid || null
-          };
-        console.log('WiFi Info:', wifiInfo);
+      const wifiInfo = {
+        ssid: (netInfo.details as any)?.ssid || null,
+        bssid: (netInfo.details as any)?.bssid || null
+      };
+      console.log('WiFi Info:', wifiInfo);
 
-        // Debug check for BSSID
-        if (!wifiInfo.bssid) {
-          console.warn('BSSID not available. Check location permissions.');
-          // For testing, you might want to bypass this check
-          // return true;
-          throw new Error("Unable to verify classroom WiFi. Please ensure location permissions are enabled.");
-        }
+      if (!wifiInfo.bssid) {
+        console.warn('BSSID not available. Check location permissions.');
+        throw new Error("Unable to verify classroom WiFi. Please ensure location permissions are enabled.");
+      }
 
-        setCurrentWifi(wifiInfo);
+      setCurrentWifi(wifiInfo);
+      const expectedConfig = CLASSROOM_WIFI_CONFIG[currentClass];
+      if (!expectedConfig) {
+        throw new Error("Class configuration not found");
+      }
 
-        // Check if connected to correct classroom WiFi
-        const expectedConfig = CLASSROOM_WIFI_CONFIG[currentClass];
-        if (!expectedConfig) {
-          throw new Error("Class configuration not found");
-        }
-
-        if (wifiInfo.bssid !== expectedConfig.bssid) {
-          console.log('BSSID Mismatch:', {
-            current: wifiInfo.bssid,
-            expected: expectedConfig.bssid
-          });
-          throw new Error(`Please connect to ${expectedConfig.name} WiFi`);
-        }
-      } else {
-        // For iOS, we might need a different approach since BSSID access is limited
-        // You might want to use location verification instead
-        console.warn('iOS WiFi verification fallback to location check');
-        return await verifyLocation();
+      if (wifiInfo.bssid !== expectedConfig.bssid) {
+        console.log('BSSID Mismatch:', {
+          current: wifiInfo.bssid,
+          expected: expectedConfig.bssid
+        });
+        throw new Error(`Please connect to ${expectedConfig.name} WiFi`);
       }
 
       setWifiStatus('connected');
       return true;
     } catch (error: any) {
-      console.error('WiFi check error:', error);
+      console.error('Verification error:', error);
       setWifiStatus('not_connected');
-      Alert.alert("WiFi Error", error.message);
+      Alert.alert("Verification Error", error.message);
       return false;
     }
   };
@@ -345,17 +345,22 @@ const App = () => {
 
   const isStudentEligible = async () => {
     try {
-      // Check WiFi first
-      const wifiConnected = await checkWifiConnection();
-      if (wifiConnected) return true;
+      if (Platform.OS === 'ios') {
+        // iOS: Only check location
+        const loc = await Location.getCurrentPositionAsync({});
+        const classroomPolygon = turf.polygon([CLASSROOM_COORDINATES]);
+        const userLocation = turf.point([loc.coords.longitude, loc.coords.latitude]);
+        return turf.booleanPointInPolygon(userLocation, classroomPolygon);
+      } else {
+        // Android: Keep existing WiFi + location check
+        const wifiConnected = await checkWifiConnection();
+        if (wifiConnected) return true;
 
-      // If WiFi check fails, check location
-      const loc = await Location.getCurrentPositionAsync({});
-      const classroomPolygon = turf.polygon([CLASSROOM_COORDINATES]);
-      // Fix: Correct order of coordinates for turf.point (longitude, latitude)
-      const userLocation = turf.point([loc.coords.longitude, loc.coords.latitude]);
-      
-      return turf.booleanPointInPolygon(userLocation, classroomPolygon);
+        const loc = await Location.getCurrentPositionAsync({});
+        const classroomPolygon = turf.polygon([CLASSROOM_COORDINATES]);
+        const userLocation = turf.point([loc.coords.longitude, loc.coords.latitude]);
+        return turf.booleanPointInPolygon(userLocation, classroomPolygon);
+      }
     } catch (error) {
       console.error('Verification error:', error);
       return false;
@@ -364,39 +369,44 @@ const App = () => {
 
   const handleAttendanceButton = async () => {
     if (!classStarted) {
-      // Initial verification to start class
       const isEligible = await isStudentEligible();
       if (isEligible) {
         setLocationStatus('inside');
         setModalVisible(true);
       } else {
-        Alert.alert('Error', 'You must be either connected to classroom WiFi or inside the classroom');
+        const message = Platform.OS === 'ios' 
+          ? 'You must be inside the classroom to mark attendance'
+          : 'You must be either connected to classroom WiFi or inside the classroom';
+        Alert.alert('Error', message);
         setLocationStatus('outside');
       }
     } else {
-      // For marking attendance
       const isEligible = await isStudentEligible();
       if (isEligible) {
         setModalVisible(true);
       } else {
-        Alert.alert('Error', 'You must be either connected to classroom WiFi or inside the classroom');
+        const message = Platform.OS === 'ios' 
+          ? 'You must be inside the classroom to mark attendance'
+          : 'You must be either connected to classroom WiFi or inside the classroom';
+        Alert.alert('Error', message);
       }
     }
   };
 
   const handleVerificationSuccess = () => {
     if (!classStarted) {
-      // Start class after initial verification
       setClassStarted(true);
       setHasInitialVerification(true);
       setTimer(0);
       const interval = setInterval(() => {
         setTimer(prev => prev + 1);
-        getUserLocation();
+        if (Platform.OS !== 'ios') {
+          // Only check location continuously on Android
+          getUserLocation();
+        }
       }, 1000);
       setTimerInterval(interval);
     } else {
-      // Mark attendance
       setFinalTime(timer);
       if (timerInterval) {
         clearInterval(timerInterval);
@@ -496,13 +506,19 @@ const App = () => {
   };
 
   const checkGeofence = async (lat: number, lng: number) => {
-    console.log(lat, lng);
     const classroomPolygon = turf.polygon([CLASSROOM_COORDINATES]);
     const userLocation = turf.point([lng, lat]);
     
-    // Check WiFi status
-    const wifiConnected = await checkWifiConnection().catch(() => false);
+    if (Platform.OS === 'ios') {
+      // iOS: Only update status without triggering alerts
+      const isInside = turf.booleanPointInPolygon(userLocation, classroomPolygon);
+      setLocationStatus(isInside ? 'inside' : 'outside');
+      setIsinside(isInside);
+      return;
+    }
     
+    // Android: Keep existing WiFi + location check
+    const wifiConnected = await checkWifiConnection().catch(() => false);
     if (wifiConnected || turf.booleanPointInPolygon(userLocation, classroomPolygon)) {
       setLocationStatus('inside');
       setIsinside(true);

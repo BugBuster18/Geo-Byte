@@ -19,7 +19,7 @@ const SignIn = () => {
 
   const handleLogin = async () => {
     try {
-      if (!email || !password || !name) {
+      if (!email || !password) {
         Alert.alert('Error', 'Please fill in all fields');
         return;
       }
