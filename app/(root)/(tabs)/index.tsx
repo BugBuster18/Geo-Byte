@@ -12,14 +12,15 @@ import { useRouter } from 'expo-router';
 import * as Network from 'expo-network';
 import NetInfo from '@react-native-community/netinfo';
 import { ID, Databases } from 'react-native-appwrite';
-import { appwriteConfig, client } from '@/lib/appwrite';
+import { appwriteConfig, client, getCourses, DATABASE_ID } from '@/lib/appwrite';
+import { User, Course } from "@/lib/types";
 
 const CLASSROOM_WIFI_CONFIG = {
   CS301: {
     ssid: "CS301_CLASSROOM",
-    bssid: "d4:20:b0:99:d5:51", // Your classroom router's BSSID
+    bssid: ["d4:20:b0:99:ad:81", "d4:20:b0:99:ad:91"], // Array of BSSIDs
     name: "Software Engineering",
-    code: "CS301" // Added course code
+    code: "CS301"
   }
 } as const;
 
@@ -27,16 +28,6 @@ type ClassroomKeys = keyof typeof CLASSROOM_WIFI_CONFIG;
 const currentClass: ClassroomKeys = 'CS301';
 
 const CLASSROOM_COORDINATES = [
-  // [ 75.024145,15.393461],
-  // [75.024585,15.393709],
-  // [75.024331,15.394174 ],
-  // [75.023805,15.393964],
-  // [ 75.024145,15.393461],
-
-
-
-// ! classroom
-
   [75.0251, 15.3928], // Corner 1 (lng, lat)
   [75.0251, 15.3927], // Corner 3
   [75.0252, 15.3927], // Corner 2
@@ -68,6 +59,9 @@ const App = () => {
   const [finalTime, setFinalTime] = useState<number | null>(null);
   const [locationStatus, setLocationStatus] = useState<'not_checked' | 'inside' | 'outside'>('not_checked');
   const [hasInitialVerification, setHasInitialVerification] = useState(false);
+  const [activeCourses, setActiveCourses] = useState<Course[]>([]);
+  const [refreshingCurrentClass, setRefreshingCurrentClass] = useState(false);
+  const [hasVerifiedPresence, setHasVerifiedPresence] = useState(false);
 
   const getWifiStatusText = () => {
     if (Platform.OS === 'ios') {
@@ -127,7 +121,11 @@ const App = () => {
         throw new Error("Please ensure you are inside the classroom");
       }
 
-      // Android: Keep existing WiFi verification
+      // Get active course and check if class is in session
+      if (activeCourses.length === 0) {
+        throw new Error("No active class found");
+      }
+
       const netInfo = await NetInfo.fetch('wifi');
       if (!netInfo.isConnected) {
         throw new Error("Please connect to WiFi");
@@ -150,7 +148,9 @@ const App = () => {
         throw new Error("Class configuration not found");
       }
 
-      if (wifiInfo.bssid !== expectedConfig.bssid) {
+      // Check if current BSSID matches any of the allowed BSSIDs
+      const isValidBSSID = expectedConfig.bssid.includes(wifiInfo.bssid);
+      if (!isValidBSSID) {
         console.log('BSSID Mismatch:', {
           current: wifiInfo.bssid,
           expected: expectedConfig.bssid
@@ -180,80 +180,53 @@ const App = () => {
     }
   };
 
-  const handleAuthentication = async (type: 'face' | 'fingerprint') => {
-    setModalVisible(false);
+  const handleAuthentication = async (type: 'face' | 'fingerprint', isVerification = false) => {
     try {
-      // First verify WiFi connection
       const isWifiValid = await checkWifiConnection();
       if (!isWifiValid) {
-        return;
+        return false;
       }
 
-      // Log WiFi details for verification
-      console.log('Current WiFi:', currentWifi);
-      console.log('Expected BSSID:', CLASSROOM_WIFI_CONFIG[currentClass].bssid);
-
-      // Rest of authentication code...
-      const compatible = await LocalAuthentication.hasHardwareAsync();
-      if (!compatible) {
-        Alert.alert('Error', 'This device doesn\'t support biometric authentication');
-        return;
-      }
-  
-      const biometricMethods = await getBiometricType();
-      
-      if (type === 'face' && !biometricMethods.face) {
-        Alert.alert('Error', 'Face authentication is not available on this device');
-        return;
-      }
-  
-      if (type === 'fingerprint' && !biometricMethods.fingerprint) {
-        Alert.alert('Error', 'Fingerprint authentication is not available on this device');
-        return;
-      }
-  
-      const androidMessage = type === 'face' ? 
-        'Scan your face to mark attendance' : 
-        'Scan your fingerprint to mark attendance';
-  
       const result = await LocalAuthentication.authenticateAsync({
-        promptMessage: Platform.OS === 'android' ? androidMessage : 
-          `Authenticate using ${type === 'face' ? 'Face ID' : 'Touch ID'}`,
+        promptMessage: isVerification 
+          ? `Verify your presence using ${type}` 
+          : `Mark attendance using ${type}`,
         disableDeviceFallback: false,
-        cancelLabel: 'Cancel',
-        requireConfirmation: false,
-        ...(Platform.OS === 'android' && {
-          authenticationType: type === 'face' ? 
-            LocalAuthentication.AuthenticationType.FACIAL_RECOGNITION : 
-            LocalAuthentication.AuthenticationType.FINGERPRINT
-        })
+        cancelLabel: 'Cancel'
       });
-  
+
       if (result.success) {
-        if (classStarted) {
-          // Mark attendance in Appwrite
-          const attendanceMarked = await markAttendanceInAppwrite();
-          if (attendanceMarked) {
-            Alert.alert("Success", "Attendance marked!", [
-              { text: 'OK', onPress: handleVerificationSuccess }
-            ]);
-          } else {
-            Alert.alert("Error", "Failed to record attendance");
-          }
+        if (isVerification) {
+          // For verification, just close modal and set status
+          setModalVisible(false);
+          setHasVerifiedPresence(true);
+          Alert.alert('Success', 'Your presence has been verified. Click "Mark Attendance" when ready.');
+          return true;
         } else {
-          Alert.alert("Success", "Class started!", [
-            { text: 'OK', onPress: handleVerificationSuccess }
-          ]);
+          // For attendance marking
+          try {
+            const attendanceMarked = await markAttendanceInAppwrite({
+              user,
+              activeClass: currentActiveClass!
+            });
+            
+            if (attendanceMarked) {
+              setModalVisible(false);
+              setHasVerifiedPresence(false); // Reset verification
+              Alert.alert('Success', 'Attendance marked successfully!');
+              return true;
+            }
+          } catch (error) {
+            console.error('Attendance marking error:', error);
+            Alert.alert('Error', 'Failed to mark attendance');
+          }
         }
-      } else {
-        Alert.alert(
-          'Authentication Failed',
-          'Please try again or use an alternative method'
-        );
       }
+      return false;
     } catch (error) {
       console.error('Authentication error:', error);
-      Alert.alert('Error', 'Authentication failed. Please try again.');
+      Alert.alert('Error', 'Authentication failed');
+      return false;
     }
   };
 
@@ -367,30 +340,60 @@ const App = () => {
     }
   };
 
-  const handleAttendanceButton = async () => {
-    if (!classStarted) {
+  const handlePresenceVerification = async () => {
+    try {
       const isEligible = await isStudentEligible();
-      if (isEligible) {
-        setLocationStatus('inside');
-        setModalVisible(true);
-      } else {
-        const message = Platform.OS === 'ios' 
-          ? 'You must be inside the classroom to mark attendance'
-          : 'You must be either connected to classroom WiFi or inside the classroom';
-        Alert.alert('Error', message);
-        setLocationStatus('outside');
+      if (!isEligible) {
+        throw new Error('You must be in class to verify presence');
       }
-    } else {
-      const isEligible = await isStudentEligible();
-      if (isEligible) {
-        setModalVisible(true);
-      } else {
-        const message = Platform.OS === 'ios' 
-          ? 'You must be inside the classroom to mark attendance'
-          : 'You must be either connected to classroom WiFi or inside the classroom';
-        Alert.alert('Error', message);
+
+      const result = await LocalAuthentication.authenticateAsync({
+        promptMessage: 'Verify your presence using biometrics',
+        disableDeviceFallback: false,
+        cancelLabel: 'Cancel'
+      });
+
+      if (result.success) {
+        setHasVerifiedPresence(true);
+        Alert.alert('Success', 'Your presence has been verified. You can now mark attendance.');
       }
+    } catch (error) {
+      console.error('Verification error:', error);
+      Alert.alert('Error', 'Failed to verify presence. Please try again.');
     }
+  };
+
+  const handleAttendanceButton = async () => {
+    if (!currentActiveClass) {
+      Alert.alert('No Active Class', 'There is no ongoing class at the moment.');
+      return;
+    }
+
+    const isEligible = await isStudentEligible();
+    if (!isEligible) {
+      const message = Platform.OS === 'ios' 
+        ? 'You must be inside the classroom'
+        : 'You must be either connected to classroom WiFi or inside the classroom';
+      Alert.alert('Error', message);
+      setLocationStatus('outside');
+      return;
+    }
+
+    setLocationStatus('inside');
+
+    if (!hasVerifiedPresence) {
+      // Direct biometric verification without modal
+      await handlePresenceVerification();
+    } else {
+      // Show modal only for attendance marking
+      setModalVisible(true);
+    }
+  };
+
+  const getAttendanceButtonText = () => {
+    if (!currentActiveClass) return "No Active Class";
+    if (!hasVerifiedPresence) return "Verify Presence";
+    return "Mark Attendance";
   };
 
   const handleVerificationSuccess = () => {
@@ -443,32 +446,6 @@ const App = () => {
         Alert.alert("Permission Denied", "Location permission is required for attendance.");
       }
     };
-    // let intervalId: NodeJS.Timeout;
-    // let timeoutId: NodeJS.Timeout;
-
-    // const startLocationChecks = () => {
-    //   intervalId = setInterval(() => {
-    //     getUserLocation();
-    //     console.log("checking")
-    //   }, 30000); // Check every 30 seconds
-
-    //   // Stop checking after 5 minutes
-    //   timeoutId = setTimeout(() => {
-    //     clearInterval(intervalId);
-    //     setIsFiveMinuteComplete(false);
-    //   }, 5 * 60 * 1000); // 5 minutes in milliseconds
-    // };
-
-    // if (isFiveMinuteComplete) {
-    //   startLocationChecks();
-    // }
-
-    // // Cleanup function
-    // return () => {
-    //   clearInterval(intervalId);
-    //   clearTimeout(timeoutId);
-    // };
-
     requestPermissions();
   }, []);
 
@@ -540,45 +517,93 @@ const App = () => {
     }
   };
 
-  const markAttendanceInAppwrite = async () => {
+  const markAttendanceInAppwrite = async ({ 
+    user, 
+    activeClass 
+  }: { 
+    user: User | null; 
+    activeClass: Course 
+  }) => {
     try {
+      if (!activeClass || !user) {
+        throw new Error('Missing required data');
+      }
+  
+      console.log('Attempting to mark attendance with:', {
+        user,
+        activeClass,
+      });
+  
       const databases = new Databases(client);
-      const ATTENDANCE_COLLECTION_ID = process.env.EXPO_PUBLIC_APPWRITE_ATTENDANCE_COLLECTION_ID!;
-      
-      // Get current class details
-      const currentClassDetails = CLASSROOM_WIFI_CONFIG[currentClass];
-      
+      const ATTENDANCE_COLLECTION_ID = '67c89861000dfa747718';
+  
+      const attendanceData = {
+        Name: user.name || "",
+        Email: user.email || "",
+        isPresent: true,
+        Created_At: new Date().toISOString(),
+        Course_Code: activeClass.courseId
+      };
+  
+      console.log('Creating attendance record with:', attendanceData);
+  
       const attendanceRecord = await databases.createDocument(
-        appwriteConfig.databaseId,
+        DATABASE_ID,
         ATTENDANCE_COLLECTION_ID,
         ID.unique(),
-        {
-          "Name": user?.name || "ganesh",
-          "Email": user?.email || "as@gmail.com",
-          "Created_At": new Date().toISOString(),
-          "isPresent": true,
-          "Course_Code": currentClassDetails.code // Add course code from current class
-        }
+        attendanceData
       );
-
+  
       console.log('Attendance record created:', attendanceRecord);
-      
-      if (!attendanceRecord.$id) {
-        throw new Error('Failed to create complete attendance record');
-      }
-
       return true;
     } catch (error) {
       console.error('Failed to mark attendance:', error);
-      Alert.alert('Error', 'Failed to record attendance. Please try again.');
       return false;
     }
   };
 
+  useEffect(() => {
+    const fetchActiveCourses = async () => {
+      try {
+        const courses = await getCourses();
+        setActiveCourses(courses.filter(course => course.isClassOn));
+      } catch (error) {
+        console.error('Error fetching active courses:', error);
+      }
+    };
+
+    fetchActiveCourses();
+    const interval = setInterval(fetchActiveCourses, 30000); // Refresh every 30 seconds
+
+    return () => clearInterval(interval);
+  }, []);
+
+  const refreshCurrentClass = async () => {
+    try {
+      setRefreshingCurrentClass(true);
+      const courses = await getCourses();
+      const active = courses.filter(course => course.isClassOn);
+      setActiveCourses(active);
+    } catch (error) {
+      console.error('Error refreshing current class:', error);
+      Alert.alert('Error', 'Failed to refresh current class');
+    } finally {
+      setRefreshingCurrentClass(false);
+    }
+  };
+
+  // Only show the most recent active class
+  const currentActiveClass = activeCourses.length > 0 ? activeCourses[0] : null;
+
+  useEffect(() => {
+    if (!currentActiveClass) {
+      setHasVerifiedPresence(false);
+    }
+  }, [currentActiveClass]);
+
   if (!fontsLoaded) {
     return null; // or a loading spinner
   }
-  
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: 'white' }}>
@@ -621,46 +646,62 @@ const App = () => {
       </View>
       
       {/* box and cards */}
-      <View className="flex flex-row items-center justify-between ">
-       <Text style={{ fontFamily: 'Rubik-Bold' }} className="text-2xl mt-5 ml-5 ">Current Class</Text>
-      </View>
-      <View className="flex flex-row items-center justify-between ml-10 mt-2 shadow-md shadow-zinc-300 rounded-lg" style={{ width: 310, height: 80, borderRadius: 14 }}>
-        <View className="bg-white rounded-lg p-3" style={{ flex: 1, justifyContent: 'center', alignItems: 'center', flexDirection: 'column' }}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-              <Text style={{ fontFamily: 'Rubik-medium' }} className="text-l">· CS301   Software Engineering</Text>
-              <Animated.Image source={icons.live} style={{ width: 25, height: 28, marginLeft: 10, opacity: fadeAnim }} />
-            </View>
-            {(classStarted || finalTime) && (
-              <Text className="text-sm font-rubik text-gray-600">
-                {classStarted ? (
-                  `${Math.floor(timer / 60)}:${(timer % 60).toString().padStart(2, '0')}`
-                ) : (
-                  `${Math.floor(finalTime! / 60)}:${(finalTime! % 60).toString().padStart(2, '0')}`
-                )}
-              </Text>
-            )}
-          </View>
-          <View style={{ marginTop: 10 }}>
-            <Text style={{ 
-              fontFamily: 'Rubik-light',
-              color: locationStatus === 'inside' ? 'green' : locationStatus === 'outside' ? 'red' : 'black'
-            }}>
-              {getLocationStatusText()}
-            </Text>
-          </View>
-        </View>
+      <View className="flex flex-row items-center justify-between">
+        <Text style={{ fontFamily: 'Rubik-Bold' }} className="text-2xl mt-5 ml-5">
+          Current Classes
+        </Text>
+        <TouchableOpacity 
+          onPress={refreshCurrentClass}
+          disabled={refreshingCurrentClass}
+          className="mt-5 mr-5"
+        >
+          <Animated.Image 
+            source={icons.refresh}
+            className="w-6 h-6"
+            style={{
+              opacity: refreshingCurrentClass ? 0.5 : 1,
+              transform: [{
+                rotate: refreshingCurrentClass ? '180deg' : '0deg'
+              }]
+            }}
+          />
+        </TouchableOpacity>
       </View>
 
+      {currentActiveClass ? (
+        <View key={currentActiveClass.courseId} className="flex flex-row items-center justify-between ml-10 mt-2 shadow-md shadow-zinc-300 rounded-lg" style={{ width: 310, height: 80, borderRadius: 14 }}>
+          <View className="bg-white rounded-lg p-3" style={{ flex: 1, justifyContent: 'center', alignItems: 'center', flexDirection: 'column' }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <Text style={{ fontFamily: 'Rubik-medium' }} className="text-l">
+                  · {currentActiveClass.courseId} {currentActiveClass.courseName}
+                </Text>
+                <Animated.Image source={icons.live} style={{ width: 25, height: 28, marginLeft: 10, opacity: fadeAnim }} />
+              </View>
+            </View>
+            <View style={{ marginTop: 10 }}>
+              <Text style={{ fontFamily: 'Rubik-light', color: 'green' }}>
+                Started at {currentActiveClass.startedAt}
+              </Text>
+            </View>
+          </View>
+        </View>
+      ) : (
+        <View className="flex flex-row items-center justify-center ml-10 mt-2">
+          <Text style={{ fontFamily: 'Rubik-Regular' }} className="text-gray-500">
+            No active class at the moment
+          </Text>
+        </View>
+      )}
+      
       {/* Combined Attendance Button */}
       <TouchableOpacity 
         onPress={handleAttendanceButton}
-        className={`bg-blue-500 py-3 rounded-lg mx-10 mt-4 mb-4`} // Added mb-4 for spacing
+        disabled={false} // Remove the disabled state
+        className={`bg-blue-500 py-3 rounded-lg mx-10 mt-4 mb-4`}
       >
         <Text className="text-white text-center font-rubik-medium text-base">
-          {!classStarted 
-            ? "Verify Your Presence" 
-            : "Mark Attendance"}
+          {getAttendanceButtonText()}
         </Text>
       </TouchableOpacity>
       
@@ -725,7 +766,7 @@ const App = () => {
         <View style={{ width: '100%', padding: 20, backgroundColor: 'white', borderTopLeftRadius: 20, borderTopRightRadius: 20 }}>
           <View style={{ flexDirection: 'row', justifyContent: 'center', alignItems: 'center', marginBottom: 20 }}>
             <Text style={{ fontFamily: 'Rubik-Bold', fontSize: 20, textAlign: 'center' }}>
-              Attendance Verification
+              Mark Attendance
             </Text>
           </View>
           
@@ -765,7 +806,7 @@ const App = () => {
 
             {/* Biometric Options - Always show them but disable if WiFi not connected */}
             <TouchableOpacity 
-              onPress={() => wifiStatus === 'connected' && handleAuthentication('face')}
+              onPress={() => wifiStatus === 'connected' && handleAuthentication('face', false)}
               style={{
                 backgroundColor: wifiStatus === 'connected' ? '#dce6fa' : '#f0f0f0',
                 padding: 15,
@@ -789,7 +830,7 @@ const App = () => {
             </TouchableOpacity>
 
             <TouchableOpacity 
-              onPress={() => wifiStatus === 'connected' && handleAuthentication('fingerprint')}
+              onPress={() => wifiStatus === 'connected' && handleAuthentication('fingerprint', false)}
               style={{
                 backgroundColor: wifiStatus === 'connected' ? '#dce6fa' : '#f0f0f0',
                 padding: 15,

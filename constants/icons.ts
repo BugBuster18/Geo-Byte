@@ -38,6 +38,7 @@ import fingerprint from "@/assets/icons/fingerprint.png";
 import warning from "@/assets/icons/warning.png";
 // import teacher from "@/assets/icons/teacher.png";
 import clock from "@/assets/icons/clock.png";
+import refresh from "@/assets/icons/refresh.png";
 export default {
   live,
   faceid,
@@ -79,4 +80,5 @@ export default {
   warning,
   // teacher,
   clock,
+  refresh
 };

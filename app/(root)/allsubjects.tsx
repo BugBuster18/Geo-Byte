@@ -5,6 +5,15 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import icons from '@/constants/icons';
 import { subjectsData } from '@/constants/subjectsData';
 
+interface Course {
+  courseId: string;
+  className: string;
+  facultyId: string;
+  isClassOn: boolean;
+  startedAt: string;
+  endedAt: string;
+}
+
 const SubjectsList = () => {
   const router = useRouter();
   
@@ -29,24 +38,29 @@ const SubjectsList = () => {
             </Text>
           </View>
 
-          {subjectsData.map((subject) => (
+          {subjectsData.map((course: Course) => (
             <TouchableOpacity 
-              key={subject.id}
+              key={course.courseId}
               onPress={() => {
                 router.push({
                   pathname: '/subjects/[id]',
-                  params: { id: subject.id }
+                  params: { id: course.courseId }
                 });
               }}
               className="bg-[#dce6fa] p-4 rounded-xl mb-4 flex-row justify-between items-center"
             >
               <View>
                 <Text style={{ fontFamily: 'Rubik-Bold' }} className="text-lg">
-                  {subject.code} - {subject.name}
+                  {course.courseId} - {course.className}
                 </Text>
                 <Text style={{ fontFamily: 'Rubik-Regular', color: '#666' }} className="mt-1">
-                  {subject.instructor}
+                  {course.facultyId}
                 </Text>
+                {course.isClassOn && (
+                  <Text style={{ fontFamily: 'Rubik-Medium', color: '#4CAF50' }} className="mt-1">
+                    Ongoing Class • {course.startedAt}
+                  </Text>
+                )}
               </View>
               <Image 
                 source={icons.rightArrow} 
