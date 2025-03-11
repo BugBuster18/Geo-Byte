@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { View, Text, Button, Alert ,Image, ScrollView, SafeAreaView, TouchableOpacity, Animated, Modal, Platform } from "react-native";
+import { View, Text, Button, Alert ,Image, ScrollView, SafeAreaView, TouchableOpacity, Animated, Modal, Platform, ToastAndroid } from "react-native";
 import * as Location from "expo-location";
 import * as turf from "@turf/turf";
 import icons from "@/constants/icons";
@@ -14,11 +14,12 @@ import NetInfo from '@react-native-community/netinfo';
 import { ID, Databases } from 'react-native-appwrite';
 import { appwriteConfig, client, getCourses, DATABASE_ID } from '@/lib/appwrite';
 import { User, Course } from "@/lib/types";
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const CLASSROOM_WIFI_CONFIG = {
   CS301: {
     ssid: "CS301_CLASSROOM",
-    bssid: ["d4:20:b0:99:ad:81", "d4:20:b0:99:ad:91"], // Array of BSSIDs
+    bssid: ["d4:20:b0:99:d5:41", "d4:20:b0:99:d5:51"], // Array of BSSIDs
     name: "Software Engineering",
     code: "CS301"
   }
@@ -28,11 +29,11 @@ type ClassroomKeys = keyof typeof CLASSROOM_WIFI_CONFIG;
 const currentClass: ClassroomKeys = 'CS301';
 
 const CLASSROOM_COORDINATES = [
-  [75.0251, 15.3928], // Corner 1 (lng, lat)
-  [75.0251, 15.3927], // Corner 3
-  [75.0252, 15.3927], // Corner 2
-  [75.0251, 15.3928], // Corner 4
-  [75.0251, 15.3928], // Corner 1 (lng, lat)
+  [75.024653,15.392570 ], // Corner 1 (lng, lat)
+  [75.025017,15.392266 ], // Corner 2
+  [75.025523,15.392540 ], // Corner 3
+  [75.025473,15.392961 ], // Corner 4
+  [75.024653,15.392570 ], // Corner 1 (lng, lat)
 ];
 
 const App = () => {
@@ -62,6 +63,7 @@ const App = () => {
   const [activeCourses, setActiveCourses] = useState<Course[]>([]);
   const [refreshingCurrentClass, setRefreshingCurrentClass] = useState(false);
   const [hasVerifiedPresence, setHasVerifiedPresence] = useState(false);
+  const [markedAttendance, setMarkedAttendance] = useState<{ [courseId: string]: { marked: boolean, timestamp: number } }>({});
 
   const getWifiStatusText = () => {
     if (Platform.OS === 'ios') {
@@ -180,6 +182,36 @@ const App = () => {
     }
   };
 
+  const showToast = (message: string) => {
+    if (Platform.OS === 'android') {
+      const showLongToast = (message:any, duration:any) => {
+        const interval = 3500; // Maximum ToastAndroid.LONG duration
+        const times = Math.ceil(duration / interval); // Calculate number of repeats
+    
+        let count = 0;
+        const showToast = () => {
+            if (count < times) {
+                ToastAndroid.showWithGravityAndOffset(
+                    message,
+                    ToastAndroid.LONG,
+                    ToastAndroid.BOTTOM,
+                    0, // xOffset
+                    100 // yOffset
+                );
+                count++;
+                setTimeout(showToast, interval); // Call it again after interval
+            }
+        };
+    
+        showToast();
+    };
+    showLongToast(message, 5000);
+    } else {
+      // For iOS, use Alert since Toast is not available
+      Alert.alert('Success', message);
+    }
+  };
+
   const handleAuthentication = async (type: 'face' | 'fingerprint', isVerification = false) => {
     try {
       const isWifiValid = await checkWifiConnection();
@@ -213,7 +245,7 @@ const App = () => {
             if (attendanceMarked) {
               setModalVisible(false);
               setHasVerifiedPresence(false); // Reset verification
-              Alert.alert('Success', 'Attendance marked successfully!');
+              showToast('Attendance marked successfully!');
               return true;
             }
           } catch (error) {
@@ -322,6 +354,7 @@ const App = () => {
         // iOS: Only check location
         const loc = await Location.getCurrentPositionAsync({});
         const classroomPolygon = turf.polygon([CLASSROOM_COORDINATES]);
+       console.log([loc.coords.longitude, loc.coords.latitude]);
         const userLocation = turf.point([loc.coords.longitude, loc.coords.latitude]);
         return turf.booleanPointInPolygon(userLocation, classroomPolygon);
       } else {
@@ -369,6 +402,11 @@ const App = () => {
       return;
     }
 
+    if (isAttendanceMarkedForCurrentSession(currentActiveClass.courseId)) {
+      Alert.alert('Already Marked', 'You have already marked attendance for this class.');
+      return;
+    }
+
     const isEligible = await isStudentEligible();
     if (!isEligible) {
       const message = Platform.OS === 'ios' 
@@ -392,6 +430,18 @@ const App = () => {
 
   const getAttendanceButtonText = () => {
     if (!currentActiveClass) return "No Active Class";
+    if (isAttendanceMarkedForCurrentSession(currentActiveClass.courseId)) {
+      return (
+        <View>
+          <Text className="text-white text-center font-rubik-medium text-base">
+            Attendance Marked
+          </Text>
+          <Text className="text-red-400 text-center font-rubik-bold text-sm mt-1">
+            Attendance already marked
+          </Text>
+        </View>
+      );
+    }
     if (!hasVerifiedPresence) return "Verify Presence";
     return "Mark Attendance";
   };
@@ -449,7 +499,19 @@ const App = () => {
     requestPermissions();
   }, []);
 
-  
+  useEffect(() => {
+    const loadMarkedAttendance = async () => {
+      try {
+        const stored = await AsyncStorage.getItem('markedAttendance');
+        if (stored) {
+          setMarkedAttendance(JSON.parse(stored));
+        }
+      } catch (error) {
+        console.error('Error loading marked attendance:', error);
+      }
+    };
+    loadMarkedAttendance();
+  }, []);
   
   useEffect(() => {
     Animated.loop(
@@ -555,6 +617,17 @@ const App = () => {
       );
   
       console.log('Attendance record created:', attendanceRecord);
+
+      const newMarkedAttendance = { 
+        ...markedAttendance, 
+        [activeClass.courseId]: {
+          marked: true,
+          timestamp: Date.now() // Store timestamp when attendance was marked
+        }
+      };
+      setMarkedAttendance(newMarkedAttendance);
+      await AsyncStorage.setItem('markedAttendance', JSON.stringify(newMarkedAttendance));
+      
       return true;
     } catch (error) {
       console.error('Failed to mark attendance:', error);
@@ -600,6 +673,67 @@ const App = () => {
       setHasVerifiedPresence(false);
     }
   }, [currentActiveClass]);
+
+  useEffect(() => {
+    // Clear marked attendance if class ends or new day starts
+    const clearAttendanceStatus = async () => {
+      try {
+        // Get the last attendance date
+        const storedDate = await AsyncStorage.getItem('lastAttendanceDate');
+        const today = new Date().toDateString();
+
+        // Clear attendance if it's a new day
+        if (storedDate !== today) {
+          await AsyncStorage.removeItem('markedAttendance');
+          setMarkedAttendance({});
+          await AsyncStorage.setItem('lastAttendanceDate', today);
+        }
+      } catch (error) {
+        console.error('Error clearing attendance status:', error);
+      }
+    };
+
+    clearAttendanceStatus();
+  }, []); // Run on component mount
+
+  // Add this effect to handle class changes
+  useEffect(() => {
+    if (currentActiveClass) {
+      // Clear previous attendance status when a new class starts
+      const clearPreviousAttendance = async () => {
+        try {
+          const storedStatus = await AsyncStorage.getItem('markedAttendance');
+          if (storedStatus) {
+            const attendanceData = JSON.parse(storedStatus);
+            // Only keep attendance records for current active class
+            const updatedAttendance = {
+              [currentActiveClass.courseId]: attendanceData[currentActiveClass.courseId]
+            };
+            setMarkedAttendance(updatedAttendance);
+            await AsyncStorage.setItem('markedAttendance', JSON.stringify(updatedAttendance));
+          }
+        } catch (error) {
+          console.error('Error clearing previous attendance:', error);
+        }
+      };
+
+      clearPreviousAttendance();
+    }
+  }, [currentActiveClass?.courseId]); // Run when active class changes
+
+  // Add a helper function to check if attendance is marked for current session
+  const isAttendanceMarkedForCurrentSession = (courseId: string): boolean => {
+    if (!currentActiveClass?.startedAt) return false;
+    
+    const markedTime = markedAttendance[courseId]?.timestamp;
+    const classStartTime = new Date(currentActiveClass.startedAt).getTime();
+    
+    // If no marked time or class started after last marked attendance, allow marking again
+    return markedTime ? markedTime > classStartTime : false;
+  };
+
+  // Update the attendance button disabled state
+  const isButtonDisabled = !currentActiveClass || isAttendanceMarkedForCurrentSession(currentActiveClass?.courseId);
 
   if (!fontsLoaded) {
     return null; // or a loading spinner
@@ -697,8 +831,9 @@ const App = () => {
       {/* Combined Attendance Button */}
       <TouchableOpacity 
         onPress={handleAttendanceButton}
-        disabled={false} // Remove the disabled state
-        className={`bg-blue-500 py-3 rounded-lg mx-10 mt-4 mb-4`}
+        disabled={isButtonDisabled}
+        className={`bg-blue-500 py-3 rounded-lg mx-10 mt-4 mb-4 
+          ${isButtonDisabled ? 'opacity-50' : ''}`}
       >
         <Text className="text-white text-center font-rubik-medium text-base">
           {getAttendanceButtonText()}

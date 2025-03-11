@@ -19,7 +19,7 @@
       }
     },
     "android": {
-      "package": "com.yourcompany.attendance",
+      "package": "com.iiitdwd.geoattend",
       "versionCode": 1,
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/icon.png",
@@ -27,11 +27,16 @@
       },
       "permissions": [
         "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_BACKGROUND_LOCATION",
         "USE_BIOMETRIC",
         "USE_FINGERPRINT",
         "android.permission.USE_BIOMETRIC",
-        "android.permission.USE_FINGERPRINT"
-      ]
+        "android.permission.USE_FINGERPRINT",
+        "android.permission.ACCESS_WIFI_STATE",
+        "android.permission.INTERNET"
+      ],
+      "softwareKeyboardLayoutMode": "pan"
     },
     "web": {
       "bundler": "metro",
@@ -44,7 +49,7 @@
         "expo-splash-screen",
         {
           "image": "./assets/images/splash-icon.png",
-          "resizeMode": "cover",
+          "resizeMode": "contain",
           "backgroundColor": "#ffffff",
           "enableFullScreenImage_legacy": true
         }
@@ -75,11 +80,15 @@
     "extra": {
       "router": {
         "origin": false,
-        "hiddenRoutes": ["/subjects/[id]"]
+        "hiddenRoutes": [
+          "/subjects/[id]",
+          "/subjects/[id]"
+        ]
       },
       "eas": {
-        "projectId": "2c149c90-4f4a-441c-9489-4b74e17e9fa4"
+        "projectId": "a0736aa7-ebe6-4096-9953-15277833363a"
       }
-    }
+    },
+    "owner": "venky321"
   }
 }

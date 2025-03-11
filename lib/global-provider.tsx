@@ -137,13 +137,20 @@ export const GlobalProvider = ({ children }: GlobalProviderProps) => {
     }));
   };
 
-  const setActiveClassSession = (classData: any) => {
-    setCurrentSession(prev => ({
-      ...prev,
-      activeClass: classData,
-      presentStudents: [],
-      absentStudents: []
-    }));
+  const setActiveClassSession = async (classData: any) => {
+    try {
+      // Clear previous attendance status when starting new session
+      await AsyncStorage.removeItem('markedAttendance');
+      
+      setCurrentSession(prev => ({
+        ...prev,
+        activeClass: classData,
+        presentStudents: [],
+        absentStudents: []
+      }));
+    } catch (error) {
+      console.error('Error resetting attendance status:', error);
+    }
   };
 
   const handleEmailLogin = async (email: string, password: string, name: string, userType: 'student' | 'faculty') => {
