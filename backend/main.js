@@ -3,7 +3,7 @@ require('dotenv').config(); // Add this line to load environment variables
 const express = require('express');
 const routes = require('./routes/index.route');
 const app = express();
-const port = 3030; // Fixed port to avoid env issues
+const port = process.env.PORT || 3030; // Fixed port to avoid env issues
 const nodemailer = require('nodemailer');
 const cors = require('cors');
 
