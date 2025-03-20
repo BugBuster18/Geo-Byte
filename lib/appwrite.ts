@@ -9,9 +9,14 @@ export const config = {
 };
 
 export const client = new Client();
-client
+try{
+
+  client
   .setEndpoint(config.endpoint!)
   .setProject(config.projectId!);
+} catch (error) {
+  console.error('Error setting up Appwrite client:', error);
+}
 
 export const account = new Account(client);
 export const databases = new Databases(client);
@@ -198,28 +203,45 @@ export const emailLogin = async (email: string, password: string, name: string, 
   try {
     const collectionId = userType === 'student' ? STUDENTS_COLLECTION_ID : FACULTY_COLLECTION_ID;
     
-    // Fix: Use Query.equal for each field
-    // Query with lowercase email for consistency
+    // Validate inputs
+    if (!email || !password) {
+      throw new Error('Email and password are required');
+    }
+
+    // Convert email to lowercase for consistency
+    const normalizedEmail = email.toLowerCase();
+    
+    // First verify if user exists
     const response = await databases.listDocuments(
       DATABASE_ID,
       collectionId,
-      [
-        Query.equal('email', email.toLowerCase()),
-        Query.equal('password', password),
-        Query.equal('name', name)
-      ]
+      [Query.equal('email', normalizedEmail)]
     );
 
     if (response.documents.length === 0) {
-      throw new Error('Invalid credentials. Please check your details.');
+      throw new Error('Invalid credentials. User not found.');
     }
 
+    // Then verify password
     const user = response.documents[0];
-    console.log('Login successful for:', user.name);
-    return { user };
+    if (user.password !== password) {
+      throw new Error('Invalid credentials. Please check your password.');
+    }
+
+    // Add useful metadata to the response
+    return {
+      user: {
+        ...user,
+        userType,
+        lastLoginAt: new Date().toISOString()
+      }
+    };
   } catch (error) {
     console.error('Login error:', error);
-    throw error;
+    if (error instanceof Error) {
+      throw error;
+    }
+    throw new Error('Failed to authenticate user');
   }
 };
 
@@ -274,9 +296,11 @@ export const getCourses = async (): Promise<Course[]> => {
       DATABASE_ID,
       COURSES_COLLECTION_ID
     );
-    return response.documents.map(doc => ({
+    
+    // Sort courses by startedAt time to ensure consistent order
+    const courses = response.documents.map(doc => ({
       $id: doc.$id,
-      courseId: doc.courseId,  // Include courseId in the mapped response
+      courseId: doc.courseId,
       courseName: doc.courseName,
       className: doc.className,
       facultyId: doc.facultyId,
@@ -284,6 +308,13 @@ export const getCourses = async (): Promise<Course[]> => {
       startedAt: doc.startedAt,
       endedAt: doc.endedAt
     }));
+
+    // Sort by startedAt time, most recent first
+    return courses.sort((a, b) => {
+      if (!a.startedAt) return 1;
+      if (!b.startedAt) return -1;
+      return new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime();
+    });
   } catch (error) {
     console.error('Error fetching courses:', error);
     throw error;
@@ -441,44 +472,33 @@ export const markAttendanceInAppwrite = async ({
 }) => {
   try {
     if (!user?.name || !user?.email || !activeClass?.courseId) {
-      console.error('Invalid data:', { user, activeClass });
       throw new Error('Missing required attendance data');
     }
 
-    const databases = new Databases(client);
     const ATTENDANCE_COLLECTION_ID = '67c89861000dfa747718';
+    const currentTime = new Date().toISOString();
 
-    // Check if already marked attendance
-    const existing = await databases.listDocuments(
-      DATABASE_ID,
-      ATTENDANCE_COLLECTION_ID,
-      [
-        Query.equal('Email', user.email),
-        Query.equal('Course_Code', activeClass.courseId),
-        Query.greaterThan('Created_At', new Date().toISOString().split('T')[0])
-      ]
-    );
-
-    if (existing.documents.length > 0) {
-      throw new Error('Attendance already marked for today');
-    }
+    const attendanceData = {
+      Name: user.name,
+      Email: user.email,
+      isPresent: true,
+      Created_At: currentTime,
+      courseId: activeClass.courseId,
+      userId: user.$id // Add user ID to track ownership
+    };
 
     const attendanceRecord = await databases.createDocument(
       DATABASE_ID,
       ATTENDANCE_COLLECTION_ID,
       ID.unique(),
-      {
-        Name: user.name,
-        Email: user.email,
-        isPresent: true,
-        Created_At: new Date().toISOString(),
-        Course_Code: activeClass.courseId
-      }
+      attendanceData
     );
 
     return !!attendanceRecord.$id;
-  } catch (error) {
-    console.error('Attendance marking error:', error);
+  } catch (error: any) {
+    if (error?.code === 401) {
+      throw new Error('Please login again to mark attendance');
+    }
     throw error;
   }
 };

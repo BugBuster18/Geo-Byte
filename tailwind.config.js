@@ -1,35 +1,20 @@
 /** @type {import('tailwindcss').Config} */
 module.exports = {
-  // NOTE: Update this to include the paths to all of your component files.
-  content: ["./app/**/*.{js,jsx,ts,tsx}","./components/**/*.{js,jsx,ts,tsx}"], //to track changes within app and component folder
-  presets: [require("nativewind/preset")],
+  content: [
+    "./app/**/*.{js,jsx,ts,tsx}",
+    "./components/**/*.{js,jsx,ts,tsx}"
+  ],
   theme: {
     extend: {
-      fontFamily:{
-        rubik:['Rubik-Regular','sans-serif'],
-        "rubik-bold":["Rubik-bold",'sans-serif'],
-        "rubik-extrabold":["Rubik-ExtraBold",'sans-serif'],
-        "rubik-medium":["Rubik-Medium",'sans-serif'],
-        "rubik-semibold":["Rubik-SemiBold",'sans-serif'],
-        "rubik-light":["Rubik-Light",'sans-serif'],
+      fontFamily: {
+        'rubik': ['Rubik-Regular'],
+        'rubik-medium': ['Rubik-Medium'],
+        'rubik-bold': ['Rubik-Bold'],
       },
-      colors:{
-        "primary":{
-          100:'#0061FF0A',
-          200:'#0061FF1A',
-          300:'#0061FF',
-
-        },
-        accent:{
-          100:'#FBFBFD',
-        },
-        black:{
-          Default:'#000000',
-          100:'#8C8E98',
-          200:'#666876',
-          300: '#191d31'
-        },
-        danger:'#F75555'
+      colors: {
+        'black-100': '#666666',
+        'black-200': '#444444',
+        'black-300': '#222222',
       }
     },
   },

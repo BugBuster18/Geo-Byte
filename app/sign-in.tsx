@@ -13,7 +13,6 @@ const SignIn = () => {
   
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [name, setName] = useState(''); // Add name state
 
   if (!loading && isLogged) return <Redirect href="/" />;
 
@@ -29,34 +28,32 @@ const SignIn = () => {
         return;
       }
 
-      const success = await handleEmailLogin(email, password, name, userType);
+      const success = await handleEmailLogin(email.toLowerCase(), password, '', userType);
       if (success) {
-        // Use replace to prevent going back to login
         const route = userType === 'faculty' ? '/(faculty)/(tabs)' : '/(root)/(tabs)';
         router.replace(route);
       } else {
-        Alert.alert('Error', 'Invalid credentials');
+        Alert.alert('Login Failed', 'Please check your email and password');
       }
     } catch (error: any) {
-      Alert.alert('Error', error.message || 'Login failed');
+      let message = 'Login failed';
+      if (error.message?.includes('Invalid credentials')) {
+        message = 'Invalid email or password';
+      } else if (error.message?.includes('Permission denied')) {
+        message = 'Access denied. Please contact administrator.';
+      }
+      Alert.alert('Error', message);
     }
   };
 
   return (
     <SafeAreaView className="bg-white h-full">
-      <ScrollView contentContainerClassName='h-full'>
+      <ScrollView contentContainerStyle={{ height: '100%' }}>
         <Image source={images.iiitlogo} className="w-2/6 h-1/6 flex flex-row justify-content-flexstart pb-16 pr-10" resizeMode="contain"/>
         <View className="px-10">
           <Text className="text-3xl font-rubik-bold text-black-300 text-center mt-2">Login</Text>
           
           <View className="mt-8 px-6">
-            <TextInput
-              value={name}
-              onChangeText={setName}
-              placeholder="Full Name"
-              className="bg-white border border-gray-300 p-4 rounded-lg mb-4 font-rubik text-base"
-              placeholderTextColor="#666"
-            />
             <TextInput
               value={email}
               onChangeText={setEmail}

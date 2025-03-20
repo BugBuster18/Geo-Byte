@@ -39,6 +39,7 @@ import warning from "@/assets/icons/warning.png";
 // import teacher from "@/assets/icons/teacher.png";
 import clock from "@/assets/icons/clock.png";
 import refresh from "@/assets/icons/refresh.png";
+import usericon from "@/assets/icons/usericon.png";
 export default {
   live,
   faceid,
@@ -80,5 +81,5 @@ export default {
   warning,
   // teacher,
   clock,
-  refresh
+  refresh,usericon,
 };

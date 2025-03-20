@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState, useCallback } from "react";
 import { View, Text, Button, Alert ,Image, ScrollView, SafeAreaView, TouchableOpacity, Animated, Modal, Platform, ToastAndroid } from "react-native";
 import * as Location from "expo-location";
 import * as turf from "@turf/turf";
@@ -19,7 +19,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 const CLASSROOM_WIFI_CONFIG = {
   CS301: {
     ssid: "CS301_CLASSROOM",
-    bssid: ["d4:20:b0:99:d5:41", "d4:20:b0:99:d5:51"], // Array of BSSIDs
+    bssid: ["d4:20:b0:9a:93:a1","d4:20:b0:99:ab:d1", "d4:20:b0:99:ad:81","d4:20:b0:9a:93:71","d4:20:b0:99:d5:51","d4:20:b0:99:a5:41","d4:20:b0:9a:93:61"], // Array of BSSIDs
     name: "Software Engineering",
     code: "CS301"
   }
@@ -64,7 +64,8 @@ const App = () => {
   const [refreshingCurrentClass, setRefreshingCurrentClass] = useState(false);
   const [hasVerifiedPresence, setHasVerifiedPresence] = useState(false);
   const [markedAttendance, setMarkedAttendance] = useState<{ [courseId: string]: { marked: boolean, timestamp: number } }>({});
-
+  const [markeredAttendanceIsTrue, setmarkeredAttendanceeIsTrue] = useState(false)
+  const [isAttendanceEnabled, setIsAttendanceEnabled] = useState(false);
   const getWifiStatusText = () => {
     if (Platform.OS === 'ios') {
       return locationStatus === 'inside' 
@@ -245,6 +246,7 @@ const App = () => {
             if (attendanceMarked) {
               setModalVisible(false);
               setHasVerifiedPresence(false); // Reset verification
+              setmarkeredAttendanceeIsTrue(true);
               showToast('Attendance marked successfully!');
               return true;
             }
@@ -396,14 +398,35 @@ const App = () => {
     }
   };
 
+  const checkAttendanceStatus = useCallback(async () => {
+    try {
+      // Get current active course from activeCourses array
+      const currentCourse = activeCourses[0];
+      if (!currentCourse?.courseId) return;
+      
+      const serverUrl = process.env.EXPO_PUBLIC_SERVER_ENDPOINT;
+      const response = await fetch(`${serverUrl}/student/classStatus/${currentCourse.courseId}`);
+      const data = await response.json();
+      
+      setIsAttendanceEnabled(data.course?.isAttendanceEnabled || false);
+    } catch (error) {
+      console.error('Error checking attendance status:', error);
+      setIsAttendanceEnabled(false);
+    }
+  }, [activeCourses]); // Depend on activeCourses instead of currentActiveClass
+
+  // Update the useEffect to use activeCourses
+  useEffect(() => {
+    if (activeCourses.length > 0) {
+      checkAttendanceStatus();
+      const interval = setInterval(checkAttendanceStatus, 5000);
+      return () => clearInterval(interval);
+    }
+  }, [activeCourses, checkAttendanceStatus]); // Update dependencies
+
   const handleAttendanceButton = async () => {
     if (!currentActiveClass) {
       Alert.alert('No Active Class', 'There is no ongoing class at the moment.');
-      return;
-    }
-
-    if (isAttendanceMarkedForCurrentSession(currentActiveClass.courseId)) {
-      Alert.alert('Already Marked', 'You have already marked attendance for this class.');
       return;
     }
 
@@ -419,32 +442,36 @@ const App = () => {
 
     setLocationStatus('inside');
 
+    // Always allow presence verification
     if (!hasVerifiedPresence) {
-      // Direct biometric verification without modal
       await handlePresenceVerification();
-    } else {
-      // Show modal only for attendance marking
-      setModalVisible(true);
+      return;
     }
-  };
 
-  const getAttendanceButtonText = () => {
+    // Only check attendance enabled after presence is verified
+    if (!isAttendanceEnabled) {
+      Alert.alert('Attendance Not Started', 'Your presence is verified. Please wait for the faculty to start attendance.');
+      return;
+    }
+
+    if (isAttendanceMarkedForCurrentSession(currentActiveClass.courseId)) {
+      Alert.alert('Already Marked', 'You have already marked attendance for this class.');
+      return;
+    }
+
+    // Show modal for attendance marking
+    setModalVisible(true);
+};
+
+const getAttendanceButtonText = () => {
     if (!currentActiveClass) return "No Active Class";
     if (isAttendanceMarkedForCurrentSession(currentActiveClass.courseId)) {
-      return (
-        <View>
-          <Text className="text-white text-center font-rubik-medium text-base">
-            Attendance Marked
-          </Text>
-          <Text className="text-red-400 text-center font-rubik-bold text-sm mt-1">
-            Attendance already marked
-          </Text>
-        </View>
-      );
+      return "Attendance Marked";
     }
     if (!hasVerifiedPresence) return "Verify Presence";
+    if (!isAttendanceEnabled) return "Attendance Not Started";
     return "Mark Attendance";
-  };
+};
 
   const handleVerificationSuccess = () => {
     if (!classStarted) {
@@ -699,6 +726,9 @@ const App = () => {
   // Add this effect to handle class changes
   useEffect(() => {
     if (currentActiveClass) {
+      // Reset attendance status when class changes
+      setmarkeredAttendanceeIsTrue(false);
+      
       // Clear previous attendance status when a new class starts
       const clearPreviousAttendance = async () => {
         try {
@@ -744,25 +774,28 @@ const App = () => {
     <View className="px-2">
     <View className="flex flex-row items-center justify-between mt-5">
       <View className="flex flex-row">
-        {/* <Image
-          source={{ uri: user?.avatar }}
-          className="size-12 rounded-full"
-        /> */}
-
+        <Image
+          source={icons.usericon}
+          style={{ width: 48, height: 48 }} // Replace size-12 with explicit dimensions
+          className="rounded-full"
+        />
         <View className="flex flex-col items-start ml-2 justify-center">
           <Text style={{ fontFamily: 'Rubik-Regular' }} className="text-xs text-black-100">
-            Good Morning
+            Student Dashboard
           </Text>
           <Text style={{ fontFamily: 'Rubik-Bold' }} className="text-xl text-black-300">
             {capitalizedFirstName}
           </Text>
         </View>
       </View>
-      <Image source={icons.bell} className="size-6" />
+      <Image 
+        source={icons.bell} 
+        style={{ width: 24, height: 24 }} // Replace size-6 with explicit dimensions
+      />
     </View>
 
     {/* ye line he */}
-    <View className="flex flex-col mt-5">
+    <View className="flex flex-col mt-4">
       <View style={{ borderBottomColor: 'black', borderBottomWidth: 0.5, marginVertical: 1}} />
     </View>
 
@@ -771,7 +804,7 @@ const App = () => {
 
     <View className="flex flex-col  mt-10 ml-5">
       <Text style={{ fontFamily: 'Rubik-Bold' }} className="text-3xl text-black-300  mt-2">
-        Hi, {"\n"}
+        Hi, {" "}
         {capitalizedFirstName}
         </Text>
         <Text style={{ fontFamily: 'Rubik-Regular' }} className="text-2xl text-center text-black-100 mt-4">
@@ -799,7 +832,15 @@ const App = () => {
               }]
             }}
           />
-        </TouchableOpacity>
+        </TouchableOpacity> 
+      </View>
+      <View className={`${markeredAttendanceIsTrue ? "flex" : "hidden"} flex-row items-center justify-center mt-2 mx-4 bg-green-100 p-3 rounded-xl shadow-md shadow-green-200`}>
+        <Text 
+          style={{ fontFamily: 'Rubik-Regular' }} 
+          className="text-green-600 text-base"
+        >
+          ✓ Your attendance has been successfully marked Present for {currentActiveClass?.courseId}
+        </Text>
       </View>
 
       {currentActiveClass ? (
@@ -842,11 +883,11 @@ const App = () => {
       
     <View className="flex items-center justify-center">
     
-      <View style={{ width: 350, height: 240 }} // Reduced height from 300 to 200
+      <View style={{ width: 340, height: 170 }} // Reduced height from 300 to 200
         className='bg-[#dce6fa] rounded-lg p-4 shadow-md shadow-zinc-300'
       >
         <ScrollView showsHorizontalScrollIndicator={false} showsVerticalScrollIndicator={false}>
-          <CustomTouchable 
+          {/* <CustomTouchable 
             index={0} 
             arrowDirection={arrowDirection[0]} 
             toggleArrow={toggleArrow} 
@@ -856,7 +897,7 @@ const App = () => {
             <Subjects name="Software Engineering" code="CS301" subjectId="CS301" />
             <Subjects name="Database Systems" code="CS302" subjectId="CS302" />
             <Subjects name="Computer Networks" code="CS303" subjectId="CS303" />
-          </CustomTouchable>
+          </CustomTouchable> */}
           
           <CustomTouchable 
             index={1} 
@@ -989,8 +1030,15 @@ const App = () => {
             </TouchableOpacity>
 
             {/* Cancel Button */}
-            <TouchableOpacity onPress={() => setModalVisible(false)} style={{padding: 10, alignItems: 'center'}}>
-              <Image source={icons.cancel} style={{ width: 25, height: 24 }} resizeMode="contain" />
+            <TouchableOpacity 
+              onPress={() => setModalVisible(false)} 
+              style={{padding: 10, alignItems: 'center'}}
+            >
+              <Image 
+                source={icons.cancel} 
+                style={{ width: 25, height: 24 }} 
+                resizeMode="contain" 
+              />
             </TouchableOpacity>
           </View>
         </View>
