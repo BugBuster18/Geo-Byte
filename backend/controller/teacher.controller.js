@@ -1,5 +1,5 @@
 const { databases, DATABASE_ID, COURSES_COLLECTION_ID } = require('../config/appwrite');
-const { Query } = require('node-appwrite');
+const { Query, ID } = require('node-appwrite'); // Add ID import
 
 exports.turnOnClass = async (req, res) => {
     try {
@@ -136,23 +136,26 @@ exports.classStatus = async (req, res) => {
         const response = await databases.listDocuments(
             DATABASE_ID,
             COURSES_COLLECTION_ID,
-            [Query.equal('Course_Code', courseId)] // Changed from courseId to Course_Code
+            [
+                Query.equal('courseId', courseId),  // Changed from Course_Code to courseId
+                Query.equal('isClassOn', true)
+            ]
         );
 
         if (response.documents.length > 0) {
             const course = response.documents[0];
             res.status(200).json({
-                status: course.isClassOn,
-                course: course.isClassOn ? {
+                success: true,
+                isActive: true,
+                course: {
                     ...course,
-                    startedAt: course.startedAt,
-                    endedAt: course.endedAt
-                } : null
+                    lastCheck: new Date().toISOString()
+                }
             });
         } else {
-            res.status(404).json({ 
-                success: false, 
-                message: `Course not found with Course Code: ${courseId}` 
+            res.status(200).json({ 
+                success: true,
+                isActive: false 
             });
         }
     } catch (error) {
@@ -210,5 +213,91 @@ exports.createCourse = async (req, res) => {
             message: "Failed to create course",
             error: error.message 
         });
+    }
+};
+
+exports.enableAttendance = async (req, res) => {
+    try {
+        const { courseId } = req.params;
+        console.log('Enabling attendance for course:', courseId);
+        
+        // Set proper headers
+        res.setHeader('Content-Type', 'application/json');
+
+        const response = await databases.listDocuments(
+            DATABASE_ID,
+            COURSES_COLLECTION_ID,
+            [Query.equal('courseId', courseId)]
+        );
+
+        if (response.documents.length === 0) {
+            return res.status(404).json({ 
+                success: false, 
+                message: "Course not found" 
+            });
+        }
+
+        const course = response.documents[0];
+        
+        try {
+            const result = await databases.updateDocument(
+                DATABASE_ID,
+                COURSES_COLLECTION_ID,
+                course.$id,
+                { 
+                    isAttendanceEnabled: true,
+                    attendanceStartedAt: new Date().toISOString()
+                }
+            );
+
+            console.log('Course updated successfully:', result);
+            
+            res.status(200).json({ 
+                success: true,
+                message: "Attendance enabled successfully",
+                course: result
+            });
+        } catch (updateError) {
+            console.error('Error updating course:', updateError);
+            res.status(500).json({
+                success: false,
+                message: "Failed to update course attendance status",
+                error: updateError.message
+            });
+        }
+    } catch (error) {
+        console.error('Error in enableAttendance:', error);
+        res.status(500).json({ 
+            success: false, 
+            message: "Failed to enable attendance",
+            error: error.message 
+        });
+    }
+};
+
+exports.disableAttendance = async (req, res) => {
+    try {
+        const { courseId } = req.params;
+        const response = await databases.listDocuments(
+            DATABASE_ID,
+            COURSES_COLLECTION_ID,
+            [Query.equal('courseId', courseId)]
+        );
+
+        if (response.documents.length > 0) {
+            const course = response.documents[0];
+            await databases.updateDocument(
+                DATABASE_ID,
+                COURSES_COLLECTION_ID,
+                course.$id,
+                { isAttendanceEnabled: false }
+            );
+            res.status(200).json({ success: true });
+        } else {
+            res.status(404).json({ success: false, message: "Course not found" });
+        }
+    } catch (error) {
+        console.error('Error disabling attendance:', error);
+        res.status(500).json({ success: false, error: error.message });
     }
 };

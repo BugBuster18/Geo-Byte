@@ -18,11 +18,11 @@ const FacultyProfile = () => {
   };
 
   return (
-    <SafeAreaView className="bg-white flex-1">
-      <View className="px-4 py-4">
+    <SafeAreaView className="bg-white flex-1 ">
+      <View className="px-4 py-4 ">
         <Text className="text-2xl font-rubik-bold">Faculty Profile</Text>
         
-        <View className="mt-4">
+        <View className="mt-4 ">
           <Text className="text-lg font-rubik">Name: {user?.name || 'N/A'}</Text>
           <Text className="text-lg font-rubik">Email: {user?.email || 'N/A'}</Text>
           <Text className="text-lg font-rubik">Department: Computer Science</Text>

@@ -8,7 +8,8 @@ import whiteGradient from "@/assets/images/white-gradient.png";
 import map from "@/assets/images/map.png";
 import noResult from "@/assets/images/no-result.png";
 import iiitlogo from "@/assets/images/iiitlogo.png";
-
+import icon from "@/assets/images/icon.png";
+import adaptiveicon from "@/assets/images/adaptive-icon.png";
 export default {
   onboarding,
   avatar,
@@ -20,4 +21,6 @@ export default {
   map,
   noResult,
   iiitlogo,
+  icon,
+  adaptiveicon
 };

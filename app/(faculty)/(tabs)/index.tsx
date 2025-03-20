@@ -51,9 +51,32 @@ const FacultyHome = () => {
   });
   const [completedClasses, setCompletedClasses] = useState<Course[]>([]);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [startedClasses, setStartedClasses] = useState<Course[]>([]);
 
   const capitalizeFirstLetter = (str: string) => {
     return str.replace(/\b\w/g, char => char.toUpperCase());
+  };
+
+  const loadStartedClass = async () => {
+    try {
+      const stored = await AsyncStorage.getItem('startedClass');
+      if (stored) {
+        const parsedClass = JSON.parse(stored);
+        setActiveClass(parsedClass);
+        setStartedClasses([parsedClass]);
+      }
+    } catch (error) {
+      console.error('Error loading started class:', error);
+    }
+  };
+
+  const saveStartedClass = async (course: Course) => {
+    try {
+      await AsyncStorage.setItem('startedClass', JSON.stringify(course));
+      setStartedClasses([course]);
+    } catch (error) {
+      console.error('Error saving started class:', error);
+    }
   };
 
   const handleStartClass = async (course: Course) => {
@@ -63,19 +86,25 @@ const FacultyHome = () => {
         throw new Error('Failed to start class. Another class may be in session.');
       }
 
-      setActiveClass(course);
+      const updatedCourse = {
+        ...course,
+        isClassOn: true,
+        startedAt: new Date().toLocaleTimeString()
+      };
+
+      setActiveClass(updatedCourse);
       setClassSession({
         startTime: new Date(),
         date: new Date().toLocaleDateString(),
       });
       setActiveClassSession({ 
-        ...course,
+        ...updatedCourse,
         presentStudents: [],
         absentStudents: []
       });
-      setAttendanceTaken(false);
-      refreshCourses();
-
+      
+      // Remove from available courses list
+      setCourses(prev => prev.filter(c => c.$id !== course.$id));
     } catch (error: any) {
       const message = error.response?.data?.message || error.message || 'Failed to start class';
       console.error('Error starting class:', error);
@@ -129,6 +158,8 @@ const FacultyHome = () => {
         setAttendanceTaken(false);
         setActiveClassSession(null);
         setClassSession({ startTime: null, date: null });
+        await AsyncStorage.removeItem('startedClass');
+        setStartedClasses([]);
         refreshCourses();
       }
     } catch (error) {
@@ -137,9 +168,70 @@ const FacultyHome = () => {
     }
   };
 
-  const handleTakeAttendance = (courseId: string) => {
-    setAttendanceTaken(true);
-    Alert.alert('Taking Attendance', 'Students can now mark their attendance');
+  const handleTakeAttendance = async (courseId: string) => {
+    try {
+      setLoading(true);
+      const serverUrl = process.env.EXPO_PUBLIC_SERVER_ENDPOINT;
+      console.log('Enabling attendance for:', courseId);
+      console.log('Server URL:', serverUrl);
+      
+      const response = await fetch(`${serverUrl}/teacher/enableAttendance/${courseId}`, {
+        method: 'POST',
+        headers: {
+          'Accept': 'application/json',
+          'Content-Type': 'application/json'
+        },
+        // Add empty body since it's a POST request
+        body: JSON.stringify({})
+      });
+
+      // First log the raw response for debugging
+      const rawResponse = await response.text();
+      console.log('Raw server response:', rawResponse);
+
+      // Try parsing the response
+      let data;
+      try {
+        data = JSON.parse(rawResponse);
+      } catch (parseError) {
+        console.error('Failed to parse server response:', parseError);
+        throw new Error('Server returned invalid JSON');
+      }
+
+      if (!response.ok) {
+        throw new Error(data.message || 'Failed to enable attendance');
+      }
+
+      setAttendanceTaken(true);
+      Alert.alert('Success', 'Students can now mark their attendance');
+    } catch (error) {
+      console.error('Error enabling attendance:', error);
+      Alert.alert(
+        'Error', 
+        'Failed to start attendance taking. Please check server connection and try again.'
+      );
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Add function to stop taking attendance
+  const handleStopTakingAttendance = async (courseId: string) => {
+    try {
+      const response = await fetch(`${process.env.EXPO_PUBLIC_SERVER_ENDPOINT}/teacher/disableAttendance/${courseId}`, {
+        method: 'POST'
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to disable attendance');
+      }
+
+      setAttendanceTaken(false);
+      Alert.alert('Attendance Stopped', 'Students can no longer mark attendance');
+    } catch (error) {
+      console.error('Error disabling attendance:', error);
+      Alert.alert('Error', 'Failed to stop attendance');
+    }
   };
 
   const handleViewAttendance = () => {
@@ -239,6 +331,41 @@ const FacultyHome = () => {
     };
     loadCompletedCourses();
   }, []);
+
+  useEffect(() => {
+    loadStartedClass();
+  }, []);
+
+  // Add new effect to check for active classes on mount
+  useEffect(() => {
+    const checkActiveClasses = async () => {
+      try {
+        if (!user?.$id) return;
+        
+        const fetchedCourses = await getCoursesByFacultyId(user.$id);
+        const activeClass = fetchedCourses.find(course => course.isClassOn);
+        
+        if (activeClass) {
+          setActiveClass(activeClass);
+          setClassSession({
+            startTime: new Date(activeClass.startedAt || ''),
+            date: new Date().toLocaleDateString(),
+          });
+          setActiveClassSession({ 
+            ...activeClass,
+            presentStudents: [],
+            absentStudents: []
+          });
+        }
+        
+        setCourses(fetchedCourses.filter(course => !course.isClassOn));
+      } catch (error) {
+        console.error('Error checking active classes:', error);
+      }
+    };
+
+    checkActiveClasses();
+  }, [user]);
 
   const refreshCourses = async () => {
     setLoading(true);
@@ -413,19 +540,65 @@ const FacultyHome = () => {
                     </Text>
                   </TouchableOpacity>
                 ) : (
-                  <TouchableOpacity 
-                    onPress={handleViewAttendance}
-                    className="bg-white mt-3 py-3 rounded-lg"
-                  >
-                    <Text className="text-blue-600 font-rubik-medium text-center">
-                      View Attendance Details
-                    </Text>
-                  </TouchableOpacity>
+                  <View className="flex-row space-x-2 mt-3">
+                    <TouchableOpacity 
+                      onPress={handleViewAttendance}
+                      className="bg-white flex-1 py-3 rounded-lg"
+                    >
+                      <Text className="text-blue-600 font-rubik-medium text-center">
+                        View Details
+                      </Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity 
+                      onPress={() => handleStopTakingAttendance(activeClass?.courseId || '')}
+                      className="bg-red-500 flex-1 py-3 rounded-lg"
+                    >
+                      <Text className="text-white font-rubik-medium text-center">
+                        Stop Taking
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
                 )}
               </View>
             </View>
           ) : (
             <Text className="text-xl font-rubik-bold text-gray-800 mt-6 mb-4">Today's Classes</Text>
+          )}
+
+          {/* Add Started Classes Section */}
+          {startedClasses.length > 0 && !activeClass && (
+            <View className="mt-6">
+              <Text className="text-xl font-rubik-bold text-gray-800 mb-4">
+                Started Class
+              </Text>
+              {startedClasses.map((course) => (
+                <TouchableOpacity
+                  key={course.$id}
+                  onPress={() => handleStartClass(course)}
+                  className="bg-white shadow-lg shadow-gray-100 rounded-xl p-4 mb-4 border border-green-100"
+                >
+                  <View className="flex-row justify-between items-center">
+                    <View>
+                      <Text className="text-lg font-rubik-medium text-gray-800">
+                        {course.courseName}
+                      </Text>
+                      <Text className="text-base font-rubik text-gray-500">
+                        {course.className}
+                      </Text>
+                      <Text className="text-sm font-rubik text-green-500">
+                        Started at: {course.startedAt}
+                      </Text>
+                    </View>
+                    <TouchableOpacity 
+                      onPress={() => handleStartClass(course)}
+                      className="bg-green-500 py-3 px-6 rounded-full"
+                    >
+                      <Text className="text-white font-rubik-medium">Continue</Text>
+                    </TouchableOpacity>
+                  </View>
+                </TouchableOpacity>
+              ))}
+            </View>
           )}
 
           {/* Classes List */}
@@ -457,7 +630,9 @@ const FacultyHome = () => {
                           onPress={() => handleStartClass(course)}
                           className="bg-blue-500 py-3 px-6 rounded-full"
                         >
-                          <Text className="text-white font-rubik-medium">Start</Text>
+                          <Text className="text-white font-rubik-medium">
+                            {course.isClassOn ? 'Continue' : 'Start'}
+                          </Text>
                         </TouchableOpacity>
                         <TouchableOpacity 
                           onPress={() => handleDeleteCourse(course)}

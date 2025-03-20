@@ -21,13 +21,15 @@ const LoginSelection = () => {
   const handleSelection = (type: 'student' | 'faculty') => {
     if (setUserType) {
       setUserType(type);
-      router.push('/sign-up'); // Changed from sign-in to sign-up
+      // Only students can access sign-up, faculty goes directly to login
+      const route = type === 'faculty' ? '/sign-in' : '/sign-up';
+      router.push(route);
     }
   };
 
   return (
     <SafeAreaView className="bg-white h-full">
-      <ScrollView contentContainerClassName="h-full">
+      <ScrollView contentContainerStyle={{ height: '100%' }}>
         <Image 
           source={images.iiitlogo} 
           className="w-2/6 h-1/6 flex flex-row justify-content-flexstart pb-16 pr-10" 
